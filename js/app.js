@@ -1803,6 +1803,12 @@ function modeTip(m) {
 /* ===================== 启动 ===================== */
 tagPlatform();
 
+const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || '';
+document.addEventListener('DOMContentLoaded', () => {
+  const el = $('verText');
+  if (el) el.textContent = APP_VERSION ? `v${APP_VERSION}` : '—';
+});
+
 window.addEventListener('error', e => {
   document.body.dataset.err = ((document.body.dataset.err || '') + '|' + (e.message || 'err')).slice(-400);
 });

@@ -11,7 +11,7 @@
 | 版本 | 位置 | 适用 |
 |---|---|---|
 | 网页版 / PWA | `index.html` | 手机浏览器打开，可「添加到主屏幕」当 App 用 |
-| 安卓 APK | `ChaseFrame-1.0.0.apk` | 直接安装，拍照自动存进系统相册 |
+| 安卓 APK | `ChaseFrame-1.1.1.apk` | 直接安装，拍照自动存进系统相册 |
 | 鸿蒙 HAP | `harmony/`（需 DevEco Studio） | HarmonyOS NEXT 原生外壳，ArkWeb + 系统相机权限 |
 | iOS | 网页版 / 主屏 PWA | 无开发者证书，走 PWA 路线，功能除震动/方向锁定外对齐 |
 
@@ -23,7 +23,7 @@
 
 ## 快速上手（30 秒）
 
-- **安卓**：安装 `ChaseFrame-1.0.0.apk` → 允许相机 → 直接拍，照片进系统相册。
+- **安卓**：安装 `ChaseFrame-1.1.1.apk` → 允许相机 → 直接拍，照片进系统相册。
 - **网页**：手机浏览器打开分享链接 → 允许相机 → 菜单里「添加到主屏幕」，之后像 App 一样全屏用。
 
 ## 完整能力
@@ -49,7 +49,7 @@
 3. 浏览器菜单 →「添加到主屏幕」，之后从桌面图标全屏进入
 
 ### APK
-1. 把 `ChaseFrame-1.0.0.apk` 传到手机安装（需允许「安装未知来源应用」）
+1. 把 `ChaseFrame-1.1.1.apk` 传到手机安装（需允许「安装未知来源应用」）
 2. 首次打开授予相机权限
 3. 拍完的照片自动存到 `相册/Pictures/ChaseFrame`
 
@@ -106,6 +106,18 @@
 
 > 记住一条：**摄像头只在 https 或 localhost 下可用**，所以纯 http 的局域网地址只能看界面不能拍。
 
+## 版本号怎么走
+
+版本号只维护一份：`version.json`。改完东西跑：
+
+```bash
+node scripts/bump.mjs        # 1.1.1 → 1.1.2（修订号 +1）
+node scripts/bump.mjs minor  # 次版本 +1
+bash android/build.sh        # 产出 ChaseFrame-<新版本>.apk
+```
+
+`bump.mjs` 会同步：`version.json`、`android/AndroidManifest.xml`、`harmony/AppScope/app.json5`、`index.html` 的 `app-version`、README 里的安装包文件名；`build.sh` 直接从 `version.json` 读版本号与 versionCode。
+
 ## 本地构建 APK
 
 不需要 Android Studio / Gradle，脚本直接调 aapt2 + javac + d8 + apksigner：
@@ -114,7 +126,7 @@
 bash android/build.sh
 ```
 
-依赖的工具链在本机 `.toolchain/sdk`（JDK 17 + build-tools 35 + platform 35）。产物为根目录 `ChaseFrame-1.0.0.apk`。
+依赖的工具链在本机 `.toolchain/sdk`（JDK 17 + build-tools 35 + platform 35）。产物为根目录 `ChaseFrame-1.1.1.apk`。
 
 网页资源会被打进 `assets/www`，App 内通过拦截 `https://appassets.androidplatform.net` 从 assets 直读，不联网、不申请网络权限。
 
