@@ -165,7 +165,14 @@ export function evaluate(a, o = {}) {
   let hasSubject = !!subject;
 
   if (subject) {
-    target = pickTarget(subject, mode, a.motion, o.comp || 'auto', o.lookDir || 'right');
+    const ft = o.forceTarget;
+    // 目标点一旦定下就固定在图幅坐标里。若每帧按主体位置重新挑最近交点，
+    // 用户一平移手机方框就会跟着主体跑，永远追不上。
+    if (ft && Number.isFinite(ft.x) && Number.isFinite(ft.y)) {
+      target = { x: ft.x, y: ft.y, tpl: ft.tpl || { id: 'auto', name: '构图' }, d: 0, locked: true };
+    } else {
+      target = pickTarget(subject, mode, a.motion, o.comp || 'auto', o.lookDir || 'right');
+    }
     // 与界面上的"圆圈进框"保持一致：只看主体中心到目标点的距离
     const dist = Math.hypot(subject.cx - target.x, (subject.cy - target.y) * 1.05);
     posScore = clamp(1 - dist / 0.24, 0, 1);
@@ -347,3 +354,63 @@ export function scoreFrame(a, o) {
 }
 
 export { lerp };
+
+
+/* ============ 引导用的目标点：要求"挪一小步"，不能贴着主体 ============ */
+const GUIDE_PTS = [
+  [1 / 3, 1 / 3, 'thirds', '三分法'], [2 / 3, 1 / 3, 'thirds', '三分法'],
+  [1 / 3, 2 / 3, 'thirds', '三分法'], [2 / 3, 2 / 3, 'thirds', '三分法'],
+  [0.382, 0.382, 'golden', '黄金分割'], [0.618, 0.382, 'golden', '黄金分割'],
+  [0.382, 0.618, 'golden', '黄金分割'], [0.618, 0.618, 'golden', '黄金分割'],
+  [0.5, 0.5, 'center', '中心对称'],
+];
+
+/**
+ * 取景引导专用：挑一个主体需要移动、但幅度不大的标准构图点。
+ * 与 pickTarget 的区别是「不接受几乎零距离的点」——否则方框会贴在圆圈上，
+ * 用户平移手机时看起来就是框跟着主体一直跑。
+ */
+export function guideTarget(subject, mode, motion, comp = 'auto', lookDir = 'right', minOffset = 0.1, avoid = null) {
+  const isAvoid = (x, y) => !!avoid && Math.hypot(x - avoid.x, y - avoid.y) < 0.07;
+  if (!subject) return null;
+  const dirX = motion && motion.vx < 0 ? -1 : 1;
+  const wantLead = comp === 'leading' || (comp === 'auto' && (mode === 'sport' || (motion && motion.speed > 0.5)));
+
+  if (comp === 'auto' && wantLead) {
+    const lead = clamp(0.2 + (motion ? motion.speed : 0.16) * 0.16, 0.2, 0.34);
+    return {
+      x: dirX > 0 ? 0.5 - lead : 0.5 + lead,
+      y: clamp(subject.cy, 0.34, 0.62),
+      tpl: { id: 'leading', name: '运动留白' }, d: 0,
+    };
+  }
+
+  if (comp !== 'auto') {
+    const t = pickTarget(subject, mode, motion, comp, lookDir);
+    if (t && Math.hypot(subject.cx - t.x, (subject.cy - t.y) * 0.85) >= minOffset * 0.45) return t;
+    // 有些构图本来就要求原地不动（满构图 / 对称），照它的规则走
+    return t;
+  }
+
+  // 1) 主体已经落在某个好点上：不加戏，直接告诉用户"到位"
+  for (const [px, py, id, name] of GUIDE_PTS) {
+    if (id === 'center') continue;
+    if (isAvoid(px, py)) continue;
+    const d = Math.hypot(subject.cx - px, (subject.cy - py) * 0.85);
+    if (d < 0.055) return { x: px, y: py, tpl: { id, name }, d };
+  }
+
+  // 2) 否则在三分/黄金里挑一个"要挪一小步"的点；中心构图不作为自动建议
+  const skipCenter = ['portrait', 'food', 'sport', 'macro'].includes(mode);
+  let best = null, bestCost = Infinity;
+  for (const [px, py, id, name] of GUIDE_PTS) {
+    if (id === 'center') continue;
+    if (isAvoid(px, py)) continue;
+    const d = Math.hypot(subject.cx - px, (subject.cy - py) * 0.85);
+    if (d < minOffset) continue;                 // 太近，挪了也看不出差别
+    // 代价最接近 0.17：一次小步调整，新手能完成
+    const cost = Math.abs(d - 0.17) + (px < 0.2 || px > 0.8 ? 0.03 : 0);
+    if (cost < bestCost) { bestCost = cost; best = { x: px, y: py, tpl: { id, name }, d }; }
+  }
+  return best || pickTarget(subject, mode, motion, 'auto', lookDir);
+}

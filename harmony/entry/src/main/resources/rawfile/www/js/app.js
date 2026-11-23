@@ -3,7 +3,7 @@
  */
 import { FrameAnalyzer, measureSharp } from './vision.js';
 import { PLATFORM, tagPlatform, vibrate as pVibrate, shouldPromptInstall, saveHint, pickVideoMime } from './platform.js';
-import { evaluate, MODES, COMPOSITIONS, exposureAdvice, shutterAdvice, predictSubject } from './compose.js';
+import { evaluate, guideTarget, MODES, COMPOSITIONS, exposureAdvice, shutterAdvice, predictSubject } from './compose.js';
 import { Camera, describeCaps } from './camera.js';
 import { FILTERS, FILTER_FAMILIES, FILTER_COUNT, FEATURED, STYLES, filterCss, buildFilter, finishCanvas, canvasToBlob, downloadBlob, shareBlob, saveToDevice, hasNative, stamp } from './filters.js';
 
@@ -49,6 +49,10 @@ const S = {
   locked: null,
   capture: 'photo',
   simple: true,
+  targetLock: null,
+  targetMiss: 0,
+  lockHintShown: false,
+  targetAvoid: null,
 };
 
 const camera = new Camera($('video'));
@@ -264,9 +268,36 @@ function runAnalysis(ts) {
   S.a = a;
   if (DEBUG) window.__dbg = { miss: analyzer.missCount, sb: analyzer.smoothBox ? +analyzer.smoothBox.cx.toFixed(3) : null, subj: a.subject ? +a.subject.cx.toFixed(3) : null, same: analyzer === __CF.analyzer };
 
+  // ---- 构图目标锁定 ----
+  // 目标点只在"第一次认出主体"时定一次，之后固定在画面坐标里。
+  // 否则每帧按主体位置重新挑点，用户一平移手机，方框就跟着主体跑。
+  if (!S.targetLock) {
+    if (a.subject) {
+      const t = guideTarget(a.subject, S.mode, a.motion, S.comp, S.lookDir, 0.1, S.targetAvoid);
+      S.targetAvoid = null;
+      if (t) {
+        S.targetLock = { x: t.x, y: t.y, tpl: t.tpl };
+        if (!S.lockHintShown) {
+          S.lockHintShown = true;
+          setTimeout(() => {
+            if (S.targetLock) toast('构图目标已固定，点方框可以换一个', 3200);
+          }, 1900);
+        }
+      }
+    }
+    S.targetMiss = 0;
+  } else if (a.subject) {
+    S.targetMiss = 0;
+  } else if (++S.targetMiss > 70) {
+    // 主体消失了足够久（约 3 秒），才允许换一个目标位置
+    S.targetLock = null;
+    S.targetMiss = 0;
+  }
+
   const ev = evaluate(a, {
     mode: S.mode, tilt: S.tilt, evBias: S.evBias, hasGyro: S.hasGyro,
     comp: S.comp, lookDir: S.lookDir,
+    forceTarget: S.targetLock,
   });
   S.ev = ev;
   if (DEBUG) {
@@ -334,13 +365,15 @@ function drawOverlay(ts) {
     const ok = ev.score >= 86 && inside;
     const accent = ok ? '#58d68d' : '#ffb03a';
 
-    // 目标方框（四角括号 + 细边）
+    // 目标方框（四角括号 + 细边 + 半透明底），在任何背景上都能看清
     octx.save();
+    const x0 = tc.x - half, y0 = tc.y - half, side = half * 2;
+    octx.fillStyle = ok ? 'rgba(24,64,42,.28)' : 'rgba(10,10,12,.34)';
+    octx.fillRect(x0, y0, side, side);
     octx.shadowColor = 'rgba(0,0,0,.75)';
     octx.shadowBlur = 4;
     octx.strokeStyle = accent;
     octx.lineWidth = 2;
-    const x0 = tc.x - half, y0 = tc.y - half, side = half * 2;
     const corner = Math.min(16, side * 0.28);
     octx.beginPath();
     octx.moveTo(x0, y0 + corner); octx.lineTo(x0, y0); octx.lineTo(x0 + corner, y0);
@@ -355,13 +388,14 @@ function drawOverlay(ts) {
     octx.globalAlpha = 1;
 
     // 方框标签
-    const tlabel = ok ? '进框了' : '把圆圈移进这个框';
+    const tlabel = ok ? '到位 ✓' : '把圈移进框';
     octx.font = '600 10px -apple-system, system-ui, sans-serif';
     const tlw = octx.measureText(tlabel).width;
     octx.fillStyle = ok ? 'rgba(88,214,141,.95)' : 'rgba(255,176,58,.95)';
-    octx.fillRect(x0, y0 - 16, tlw + 10, 15);
+    const ly = y0 - 17 > L.rect.y ? y0 - 17 : y0 + side + 1;
+    octx.fillRect(x0, ly, tlw + 10, 15);
     octx.fillStyle = '#241300';
-    octx.fillText(tlabel, x0 + 5, y0 - 5);
+    octx.fillText(tlabel, x0 + 5, ly + 11);
 
     // 主体中心圆圈
     octx.shadowColor = 'rgba(0,0,0,.75)';
@@ -371,6 +405,23 @@ function drawOverlay(ts) {
     octx.beginPath(); octx.arc(sc.x, sc.y, ringR, 0, 7); octx.stroke();
     octx.fillStyle = ok ? '#58d68d' : 'rgba(255,255,255,.95)';
     octx.beginPath(); octx.arc(sc.x, sc.y, 2.6, 0, 7); octx.fill();
+
+    // 方框中心准星
+    octx.strokeStyle = accent;
+    octx.lineWidth = 1.6;
+    octx.beginPath();
+    octx.moveTo(tc.x - 6, tc.y); octx.lineTo(tc.x + 6, tc.y);
+    octx.moveTo(tc.x, tc.y - 6); octx.lineTo(tc.x, tc.y + 6);
+    octx.stroke();
+
+    // 目标位置的"虚影圆圈"：直白表达"把圈移到这儿"
+    if (!ok) {
+      octx.setLineDash([3, 4]);
+      octx.globalAlpha = 0.55;
+      octx.beginPath(); octx.arc(tc.x, tc.y, ringR, 0, 7); octx.stroke();
+      octx.globalAlpha = 1;
+      octx.setLineDash([]);
+    }
 
     // 方向箭头：从圆圈指向方框
     const dist = Math.hypot(tc.x - sc.x, tc.y - sc.y);
@@ -463,6 +514,18 @@ function drawOverlay(ts) {
       octx.beginPath(); octx.arc(q.x, q.y, 1.6, 0, 7); octx.fill();
     }
   }
+}
+
+/** 换一个构图目标位置：主体重新定位、切换场景/构图时调用 */
+function resetTarget(quiet = true) {
+  S.targetLock = null;
+  S.targetMiss = 0;
+  S.readyStreak = 0;
+  if (!quiet) toast('已换一个构图目标');
+}
+
+function targetHalfPx() {
+  return L ? Math.max(24, L.rect.w * 0.095) : 32;
 }
 
 function drawCompGuide() {
@@ -962,6 +1025,8 @@ function applyStyle(key) {
   S.filter = st.filter;
   S.mode = st.mode;
   S.comp = st.comp;
+  S.targetLock = null;
+  S.targetMiss = 0;
   if (S.ratio !== st.ratio) {
     S.ratio = st.ratio;
     $('btnRatio').textContent = S.ratio;
@@ -977,6 +1042,8 @@ function applyStyle(key) {
 
 function selectComp(id) {
   S.comp = id;
+  S.targetLock = null;
+  S.targetMiss = 0;
   renderCompList();
   const c = COMPOSITIONS.find(x => x.id === id);
   toast(`构图 · ${c ? c.name : id}${c ? '：' + c.desc : ''}`);
@@ -1629,6 +1696,7 @@ function bindUI() {
       await camera.start({ facing: next });
       $('video').classList.toggle('mirror', next === 'user');
       analyzer.reset();
+      resetTarget();
       S.hwEv = false;
       renderCaps();
       toast(next === 'user' ? '前置镜头' : '后置镜头');
@@ -1673,6 +1741,7 @@ function bindUI() {
   document.querySelectorAll('.mode').forEach(b => {
     b.addEventListener('click', () => {
       S.mode = b.dataset.mode;
+      resetTarget();
       document.querySelectorAll('.mode').forEach(x => x.classList.toggle('is-active', x === b));
       b.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
       toast(`${MODES[S.mode].name}模式 · ${modeTip(S.mode)}`);
@@ -1846,8 +1915,20 @@ function bindUI() {
   });
   $('video').addEventListener('pointerup', async e => {
     if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
-    if (S.demo) return;
     const rect = stage.getBoundingClientRect();
+    // 点在目标方框里 → 换一个构图目标（方框本身可以点）
+    if (S.ev && S.ev.target && S.opts.guide) {
+      const p = toScreen(S.ev.target.x, S.ev.target.y);
+      const half = targetHalfPx();
+      if (Math.abs(e.clientX - rect.left - p.x) < half && Math.abs(e.clientY - rect.top - p.y) < half) {
+        S.targetAvoid = { x: S.ev.target.x, y: S.ev.target.y };
+        S.targetLock = null;
+        S.targetMiss = 0;
+        toast('换一个构图目标');
+        return;
+      }
+    }
+    if (S.demo) return;
     const nx = (e.clientX - rect.left) / rect.width;
     const ny = (e.clientY - rect.top) / rect.height;
     const ok = await camera.focusAt(nx, ny);
@@ -1868,6 +1949,7 @@ function lockSubject(nx, ny) {
   if (S.locked) {
     S.locked = null;
     analyzer.reset();
+    resetTarget();
     toast('已取消主体锁定，回到自动识别');
     return;
   }
@@ -1880,6 +1962,7 @@ function lockSubject(nx, ny) {
   };
   analyzer.smoothBox = S.locked;
   analyzer.missCount = 0;
+  resetTarget();
   toast('已锁定这个主体 · 再长按一次可取消');
 }
 
