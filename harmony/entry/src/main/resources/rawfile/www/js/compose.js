@@ -166,13 +166,9 @@ export function evaluate(a, o = {}) {
 
   if (subject) {
     target = pickTarget(subject, mode, a.motion, o.comp || 'auto', o.lookDir || 'right');
-    const inside = subject.cx > subject.x && subject.cx < subject.x + subject.w &&
-                   subject.cy > subject.y && subject.cy < subject.y + subject.h;
+    // 与界面上的"圆圈进框"保持一致：只看主体中心到目标点的距离
     const dist = Math.hypot(subject.cx - target.x, (subject.cy - target.y) * 1.05);
-    const containsTarget = target.x > subject.x && target.x < subject.x + subject.w &&
-                           target.y > subject.y && target.y < subject.y + subject.h;
-    const eff = containsTarget ? 0 : dist;
-    posScore = clamp(1 - eff / 0.27, 0, 1);
+    posScore = clamp(1 - dist / 0.24, 0, 1);
 
     // 某些构图不看"落在哪个点"，而看别的量
     const comp = o.comp || 'auto';
@@ -211,9 +207,13 @@ export function evaluate(a, o = {}) {
     score = (expScore * 0.19 + sharpScore * 0.15 + clutterScore * 0.11 + levelScore * 0.07) / sumW;
     score = Math.min(score, 0.62);
   }
+  // 主体明显不在目标位置时，不允许给出"可以按快门"的高分
+  if (hasSubject && posScore < 0.5) score = Math.min(score, 0.62);
+
   const scorePct = Math.round(clamp(score, 0, 1) * 100);
 
   // 主提示：挑最短板
+  let moveDir = '';
   const issues = [];
   if (!hasSubject) {
     issues.push({ k: 1.0, t: '把想拍的主体放到画面里', cls: '' });
@@ -224,11 +224,13 @@ export function evaluate(a, o = {}) {
       const ax = Math.abs(dx) * 100, ay = Math.abs(dy) * 100;
       const h = dx > 0 ? '右' : '左';
       const v = dy > 0 ? '下' : '上';
-      let t;
-      const at = target.tpl.id === 'center' ? '中心' : (target.tpl.id === 'fill' ? '中间' : '位置');
-      if (ax > ay * 1.3) t = `${h}移 ${ax.toFixed(0)}% · ${target.tpl.name}的${at}`;
-      else if (ay > ax * 1.3) t = `${v}移 ${ay.toFixed(0)}% · ${target.tpl.name}的${at}`;
-      else t = `${h}${v}移 ${Math.max(ax, ay).toFixed(0)}% · ${target.tpl.name}的${at}`;
+      const dirs = [];
+      if (ax > 4) dirs.push(h);
+      if (ay > 4) dirs.push(v);
+      moveDir = dirs.join('');
+      const big = Math.max(ax, ay);
+      const step = big > 18 ? '一大步' : big > 9 ? '一小步' : '一点点';
+      const t = `手机向${moveDir}${step} · 让圆圈进框`;
       issues.push({ k: 1 - posScore + 0.32, t, cls: '' });
     }
     if (sizeScore < 0.62) {
@@ -262,6 +264,7 @@ export function evaluate(a, o = {}) {
 
   let title;
   if (!hasSubject) title = '等待主体';
+  else if (moveDir && posScore < 0.6) title = `手机向${moveDir}移`;
   else if (scorePct >= 88) title = '可以按快门了';
   else if (scorePct >= 76) title = '快到位了';
   else if (scorePct >= 62) title = '再调整一下';
@@ -275,6 +278,7 @@ export function evaluate(a, o = {}) {
     template: target.tpl,
     title,
     detail,
+    moveDir,
     detailCls: top ? top.cls : 'good',
     ready,
     hasSubject,

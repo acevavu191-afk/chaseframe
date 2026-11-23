@@ -34,10 +34,11 @@ const S = {
   burstBest: -1,
   busy: false,
   auto: false,
+  // 自动抓拍开关放在 opts 里，设置面板可直接绑定
   opts: {
     guide: true, level: true, subject: true, track: true,
     ae: true, awb: true, fast: true, hw: true,
-    watermark: false, haptic: true,
+    watermark: false, haptic: true, auto: false,
   },
   a: null,
   ev: null,
@@ -260,6 +261,7 @@ function runAnalysis(ts) {
     // 刚解锁，清掉残留
   }
   S.a = a;
+  if (DEBUG) window.__dbg = { miss: analyzer.missCount, sb: analyzer.smoothBox ? +analyzer.smoothBox.cx.toFixed(3) : null, subj: a.subject ? +a.subject.cx.toFixed(3) : null, same: analyzer === __CF.analyzer };
 
   const ev = evaluate(a, {
     mode: S.mode, tilt: S.tilt, evBias: S.evBias, hasGyro: S.hasGyro,
@@ -286,7 +288,7 @@ function runAnalysis(ts) {
   $('video').style.filter = buildFilter(S.gain, S.filter);
 
   // 自动抓拍
-  if (S.auto && S.opts.guide && ev.ready && !S.busy && ts - S.lastShotAt > 2600) {
+  if (S.opts.auto && S.opts.guide && ev.ready && !S.busy && ts - S.lastShotAt > 2600) {
     S.readyStreak++;
     if (S.readyStreak >= 4) { S.readyStreak = 0; autoShot(); }
   } else {
@@ -319,68 +321,75 @@ function drawOverlay(ts) {
 
   drawCompGuide();
 
-  // ---- 主体框 ----
-  if (a.subject && S.opts.subject) {
-    const p0 = toScreen(a.subject.x, a.subject.y);
-    const p1 = toScreen(a.subject.x + a.subject.w, a.subject.y + a.subject.h);
-    const w = p1.x - p0.x, h = p1.y - p0.y;
-    const r = Math.min(14, w * 0.18);
-    octx.strokeStyle = 'rgba(255,255,255,.55)';
-    octx.lineWidth = 1.5;
-    cornerPath(octx, p0.x, p0.y, w, h, r);
-    octx.stroke();
-    const label = a.subject.locked ? '锁定主体' : `主体 ${(a.subject.area * 100).toFixed(0)}%`;
-    octx.font = '500 10px -apple-system, system-ui, sans-serif';
-    const tw = octx.measureText(label).width;
-    octx.fillStyle = 'rgba(0,0,0,.42)';
-    octx.fillRect(p0.x + 1, Math.max(2, p0.y - 20), tw + 10, 15);
-    octx.fillStyle = 'rgba(255,255,255,.86)';
-    octx.fillText(label, p0.x + 6, Math.max(12, p0.y - 8));
-  }
+  // ---- 方框（目标）+ 圆圈（主体中心）：把手机移过去，让圆圈进框 ----
+  if (S.opts.guide && a.subject) {
+    const sc = toScreen(a.subject.cx, a.subject.cy);
+    const tc = toScreen(ev.target.x, ev.target.y);
+    const ringR = Math.max(12, L.rect.w * 0.042);
+    const half = Math.max(24, L.rect.w * 0.095);
+    const dist0 = Math.hypot(sc.x - tc.x, sc.y - tc.y);
+    const inside = dist0 < half * 0.6;
+    // 只有构图分真的到位才变绿，避免"看着进框了但其实不行"
+    const ok = ev.score >= 86 && inside;
+    const accent = ok ? '#58d68d' : '#ffb03a';
 
-  // ---- 构图目标点 + 引导线 ----
-  if (S.opts.guide && ev.suggest) {
-    const t = toScreen(ev.target.x, ev.target.y);
-    const s = toScreen(a.subject.cx, a.subject.cy);
-    const dist = Math.hypot(t.x - s.x, t.y - s.y);
-
-    // 目标点
+    // 目标方框（四角括号 + 细边）
     octx.save();
-    octx.globalAlpha = 0.85;
     octx.strokeStyle = accent;
-    octx.lineWidth = 1.6;
-    octx.beginPath(); octx.arc(t.x, t.y, 13, 0, 7); octx.stroke();
-    octx.beginPath(); octx.arc(t.x, t.y, 2.6, 0, 7); octx.fillStyle = accent; octx.fill();
-    octx.setLineDash([3, 4]);
+    octx.lineWidth = 2;
+    const x0 = tc.x - half, y0 = tc.y - half, side = half * 2;
+    const corner = Math.min(16, side * 0.28);
     octx.beginPath();
-    octx.moveTo(t.x - 20, t.y); octx.lineTo(t.x - 15, t.y);
-    octx.moveTo(t.x + 15, t.y); octx.lineTo(t.x + 20, t.y);
-    octx.moveTo(t.x, t.y - 20); octx.lineTo(t.x, t.y - 15);
-    octx.moveTo(t.x, t.y + 15); octx.lineTo(t.x, t.y + 20);
+    octx.moveTo(x0, y0 + corner); octx.lineTo(x0, y0); octx.lineTo(x0 + corner, y0);
+    octx.moveTo(x0 + side - corner, y0); octx.lineTo(x0 + side, y0); octx.lineTo(x0 + side, y0 + corner);
+    octx.moveTo(x0 + side, y0 + side - corner); octx.lineTo(x0 + side, y0 + side); octx.lineTo(x0 + side - corner, y0 + side);
+    octx.moveTo(x0 + corner, y0 + side); octx.lineTo(x0, y0 + side); octx.lineTo(x0, y0 + side - corner);
     octx.stroke();
-    octx.restore();
+    octx.globalAlpha = 0.35;
+    octx.setLineDash([4, 6]);
+    octx.strokeRect(x0, y0, side, side);
+    octx.setLineDash([]);
+    octx.globalAlpha = 1;
 
-    // 引导箭头
-    if (dist > 22) {
-      octx.save();
-      const ang = Math.atan2(t.y - s.y, t.x - s.x);
-      const startX = s.x + Math.cos(ang) * 26, startY = s.y + Math.sin(ang) * 26;
-      const endX = t.x - Math.cos(ang) * 20, endY = t.y - Math.sin(ang) * 20;
-      octx.strokeStyle = 'rgba(255,255,255,.62)';
-      octx.lineWidth = 1.6;
-      octx.setLineDash([6, 6]);
-      octx.beginPath(); octx.moveTo(startX, startY); octx.lineTo(endX, endY); octx.stroke();
+    // 方框标签
+    const tlabel = ok ? '进框了' : '把圆圈移进这个框';
+    octx.font = '600 10px -apple-system, system-ui, sans-serif';
+    const tlw = octx.measureText(tlabel).width;
+    octx.fillStyle = ok ? 'rgba(88,214,141,.95)' : 'rgba(255,176,58,.95)';
+    octx.fillRect(x0, y0 - 16, tlw + 10, 15);
+    octx.fillStyle = '#241300';
+    octx.fillText(tlabel, x0 + 5, y0 - 5);
+
+    // 主体中心圆圈
+    octx.strokeStyle = ok ? '#58d68d' : 'rgba(255,255,255,.95)';
+    octx.lineWidth = 2.2;
+    octx.beginPath(); octx.arc(sc.x, sc.y, ringR, 0, 7); octx.stroke();
+    octx.fillStyle = ok ? '#58d68d' : 'rgba(255,255,255,.95)';
+    octx.beginPath(); octx.arc(sc.x, sc.y, 2.6, 0, 7); octx.fill();
+
+    // 方向箭头：从圆圈指向方框
+    const dist = Math.hypot(tc.x - sc.x, tc.y - sc.y);
+    if (!ok && dist > ringR + half * 0.6) {
+      const ang = Math.atan2(tc.y - sc.y, tc.x - sc.x);
+      const sx = sc.x + Math.cos(ang) * (ringR + 4);
+      const sy = sc.y + Math.sin(ang) * (ringR + 4);
+      const ex = tc.x - Math.cos(ang) * (half * 0.95);
+      const ey = tc.y - Math.sin(ang) * (half * 0.95);
+      octx.strokeStyle = 'rgba(255,255,255,.8)';
+      octx.lineWidth = 2.4;
+      octx.setLineDash([7, 7]);
+      octx.beginPath(); octx.moveTo(sx, sy); octx.lineTo(ex, ey); octx.stroke();
       octx.setLineDash([]);
-      // 箭头头
       octx.beginPath();
-      octx.moveTo(endX, endY);
-      octx.lineTo(endX - Math.cos(ang - 0.42) * 9, endY - Math.sin(ang - 0.42) * 9);
-      octx.moveTo(endX, endY);
-      octx.lineTo(endX - Math.cos(ang + 0.42) * 9, endY - Math.sin(ang + 0.42) * 9);
+      octx.moveTo(ex, ey);
+      octx.lineTo(ex - Math.cos(ang - 0.45) * 13, ey - Math.sin(ang - 0.45) * 13);
+      octx.moveTo(ex, ey);
+      octx.lineTo(ex - Math.cos(ang + 0.45) * 13, ey - Math.sin(ang + 0.45) * 13);
       octx.strokeStyle = accent;
+      octx.lineWidth = 2.6;
       octx.stroke();
-      octx.restore();
     }
+    octx.restore();
   }
 
   // ---- 运动：轨迹 + 预测 ----
@@ -1042,41 +1051,162 @@ function renderCaps() {
   }
 }
 
-/* ===================== AI 构图：冻结一帧，重新构图 ===================== */
+/* ===================== AI 构图：静态图片分析与方向指引 ===================== */
 const AI_ZOOM = { loose: 0.2, mid: 0.32, tight: 0.46 };
-const AI = { frame: null, a: null, subj: null, motion: null, options: [], index: 0, zoom: 'mid' };
+const AI = { frame: null, a: null, subj: null, options: [], index: 0, zoom: 'mid', state: 'idle' };
+
+function setAIState(state, text) {
+  AI.state = state;
+  const box = $('aiState');
+  box.classList.toggle('busy', state === 'busy');
+  box.classList.toggle('done', state === 'done');
+  $('aiStateText').textContent = text;
+  $('btnAIRe').disabled = state === 'busy';
+  $('btnAIUse').disabled = state === 'busy';
+  $('btnAIPick').disabled = state === 'busy';
+}
 
 function openAICompose() {
   const c = document.createElement('canvas');
   grabTo(c);
   if (!c || !c.width) { toast('画面还没准备好'); return; }
-  const an = new FrameAnalyzer(208);
-  an.reset();
-  const a = an.analyze(c, performance.now());
-  if (!a) { toast('这一帧读不出来，稍后再试'); return; }
-
-  AI.frame = c;
-  AI.a = a;
-  AI.subj = a.subject;
-  AI.motion = a.motion;
-  AI.index = 0;
-  AI.zoom = 'mid';
-
   $('aiSheet').hidden = false;
-  $('aiTag').textContent = a.subject
-    ? `识别到主体 · 占画面 ${(a.subject.area * 100).toFixed(0)}%`
-    : '没找到明确主体 · 按中心构图';
-  $('aiAdvice').textContent = a.motion
-    ? `运动 ${(a.motion.speed * 100).toFixed(0)}%/s`
-    : '静态画面';
+  $('aiSub').textContent = '静态图片 · 不追踪、不实时';
+  analyzeStill(c);
+}
 
-  buildAIOptions();
-  $('aiSub').textContent = `已分析这一帧 · ${AI.options.length} 个方案`;
+/** 核心：对一张静态图做识别 + 构图诊断 + 方向指引 */
+function analyzeStill(canvas) {
+  setAIState('busy', '正在识别画面内容…');
+  AI.frame = canvas;
+  AI.options = [];
+  AI.index = 0;
+  $('aiCards').innerHTML = '';
+  $('aiChips').innerHTML = '';
+  $('aiIssues').innerHTML = '';
+  $('aiMove').textContent = '分析中…';
+  document.querySelectorAll('#aiDirs .dir').forEach(b => b.classList.remove('on'));
+  $('aiDirCenter').textContent = '分析中';
+
+  // 让"分析中"这一帧能画出来
+  setTimeout(() => {
+    const an = new FrameAnalyzer(208);
+    an.reset();
+    const a = an.analyze(canvas, performance.now());
+    if (!a) { setAIState('idle', '这张图读不出来'); $('aiMove').textContent = '换一张试试。'; return; }
+    AI.a = a;
+    AI.subj = a.subject;
+    renderAIResult(a);
+    buildAIOptions();
+    setAIState('done', '分析完成 · 可继续调整');
+  }, 60);
+}
+
+function pct(v) { return Math.round(v * 100); }
+
+function renderAIResult(a) {
+  const s = a.subject;
+  const chips = [];
+  const issues = [];
+  const targetInfo = evaluate(
+    { ...a, subject: s || { x: 0.32, y: 0.3, w: 0.36, h: 0.44, cx: 0.5, cy: 0.52, area: 0.16 } },
+    { mode: S.mode, comp: S.comp, lookDir: S.lookDir, hasGyro: false, evBias: 0 }
+  );
+
+  // ---- 识别结果 ----
+  if (s) {
+    chips.push(`主体占画面 ${pct(s.w * s.h)}%`);
+    const cxOff = s.cx - 0.5, cyOff = s.cy - 0.5;
+    const posTxt = Math.abs(cxOff) < 0.08 && Math.abs(cyOff) < 0.08 ? '居中'
+      : `${cxOff < 0 ? '偏左' : '偏右'}${Math.abs(cyOff) > 0.08 ? (cyOff < 0 ? '偏上' : '偏下') : ''}`;
+    chips.push(`主体位置：${posTxt}`);
+
+    const margins = { l: s.x, r: 1 - (s.x + s.w), t: s.y, b: 1 - (s.y + s.h) };
+    const maxSide = Object.entries(margins).sort((x, y) => y[1] - x[1])[0];
+    const sideName = { l: '左侧', r: '右侧', t: '上方', b: '下方' }[maxSide[0]];
+    chips.push(`留白：${sideName} ${pct(maxSide[1])}%`);
+    chips.push(`重心：${Math.abs(cxOff) < 0.08 ? '水平居中' : (cxOff < 0 ? '偏左' : '偏右')}`);
+    chips.push(`背景${a.clutter > 0.5 ? '偏乱' : '干净'}`);
+  } else {
+    chips.push('未识别到明确主体');
+    chips.push('建议：让主体更大、与背景有对比');
+  }
+
+  // ---- 构图诊断 ----
+  if (s) {
+    const boxArea = s.w * s.h;
+    if (boxArea < 0.06) issues.push('主体偏小（不到 6%），看不清细节，靠近一点或放大');
+    else if (boxArea > 0.6) issues.push('主体太满，边缘容易被切，退后一点');
+    else issues.push({ good: true, t: '主体大小合适' });
+
+    const dx = targetInfo.target.x - s.cx;
+    const dy = targetInfo.target.y - s.cy;
+    if (Math.abs(dx) > 0.05 || Math.abs(dy) > 0.05) {
+      issues.push(`主体没有落在${targetInfo.target.tpl.name}的视觉点上`);
+    } else {
+      issues.push({ good: true, t: `主体已在${targetInfo.target.tpl.name}的位置上` });
+    }
+
+    if (s.y > 0.42 && (1 - (s.y + s.h)) < 0.08) issues.push('底部太挤，脚下没有空间，抬高一点留出地面');
+    if (s.y < 0.06) issues.push('顶部贴边，头上没有留白，压低一点');
+    if (a.clutter > 0.55) issues.push('背景抢戏，换个角度或靠近让背景虚化');
+    if (a.meanLum < 0.28) issues.push('整体偏暗，提亮或换个光位');
+    if (a.meanLum > 0.72) issues.push('整体偏亮，高光有溢出风险');
+    if (issues.length && issues.every(i => i.good)) issues.unshift({ good: true, t: '这张构图已经挺稳，可以直接出片' });
+  }
+
+  $('aiChips').innerHTML = chips.map(c => `<span>${c}</span>`).join('');
+  $('aiIssues').innerHTML = issues.map(i => {
+    if (typeof i === 'string') return `<li>${i}</li>`;
+    return `<li class="${i.good ? 'good' : ''}">${i.t}</li>`;
+  }).join('');
+
+  // ---- 方向指引 ----
+  const dirs = { up: 0, down: 0, left: 0, right: 0 };
+  let main = '构图已经到位，稳住按快门';
+  let sub = '';
+
+  if (s) {
+    const dx = targetInfo.target.x - s.cx;   // 主体需要移动的方向
+    const dy = targetInfo.target.y - s.cy;
+    // 手机移动方向 = 主体移动方向的反方向
+    if (Math.abs(dx) > 0.035) { if (dx > 0) dirs.left = Math.abs(dx); else dirs.right = Math.abs(dx); }
+    if (Math.abs(dy) > 0.035) { if (dy > 0) dirs.up = Math.abs(dy); else dirs.down = Math.abs(dy); }
+
+    const parts = [];
+    if (dirs.left) parts.push('左');
+    if (dirs.right) parts.push('右');
+    if (dirs.up) parts.push('上');
+    if (dirs.down) parts.push('下');
+
+    if (parts.length) {
+      const mag = Math.max(dirs.left, dirs.right, dirs.up, dirs.down);
+      const step = mag > 0.18 ? '一大步' : mag > 0.09 ? '一小步' : '一点点';
+      const subjDir = [dx > 0.035 ? '右' : '', dx < -0.035 ? '左' : '', dy > 0.035 ? '下' : '', dy < -0.035 ? '上' : ''].join('');
+      main = `手机向${parts.join('')}移${step}（约 ${pct(mag)}% 画面）`;
+      sub = `主体会向${subjDir}移动，落到${targetInfo.target.tpl.name}的位置上；手移动方向与主体移动方向相反`;
+    } else {
+      main = '位置已经到位，稳住按快门';
+      sub = `主体已在${targetInfo.target.tpl.name}的位置上`;
+    }
+  } else {
+    main = '先让主体进入画面';
+    sub = '找一个和背景有明显对比的物体，占画面 1/5 到 1/2 比较合适';
+  }
+
+  document.querySelectorAll('#aiDirs .dir').forEach(b => {
+    b.classList.toggle('on', !!dirs[b.dataset.dir]);
+  });
+  $('aiDirCenter').textContent = s ? (targetInfo.target.tpl.name) : '无主体';
+  $('aiMove').innerHTML = `<b>${main}</b>${sub ? `<br>${sub}` : ''}`;
+
+  AI.guide = { dirs, main, sub };
+  drawAIPreview();
 }
 
 function aiTargets() {
   const list = ['thirds', 'center', 'fill'];
-  if (AI.motion && AI.motion.speed > 0.06) list.push('leading');
+  if (AI.a && AI.a.motion && AI.a.motion.speed > 0.06) list.push('leading');
   else list.push('negative');
   return list;
 }
@@ -1095,12 +1225,12 @@ function computeCrop(subj, target, fillFrac, frameAspect) {
 function buildAIOptions() {
   const f = AI.frame;
   const a = AI.a;
+  if (!f || !a) return;
   const frameAspect = f.width / f.height;
   const fill = AI_ZOOM[AI.zoom];
-  const comps = aiTargets();
   const cards = [];
 
-  comps.forEach(id => {
+  aiTargets().forEach(id => {
     const meta = COMPOSITIONS.find(c => c.id === id) || { name: id };
     const probe = evaluate(
       { ...a, subject: AI.subj || { x: 0.32, y: 0.3, w: 0.36, h: 0.44, cx: 0.5, cy: 0.52, area: 0.16 } },
@@ -1156,10 +1286,6 @@ function renderAICards() {
     box.appendChild(el);
   });
   drawAIPreview();
-  const cur = AI.options[AI.index];
-  $('aiNote').textContent = cur
-    ? `${cur.name} · ${cur.score} 分 — ${cur.detail}`
-    : '选一个方案，按它重新裁切这一帧。';
 }
 
 function drawAIPreview() {
@@ -1170,66 +1296,108 @@ function drawAIPreview() {
   cv.height = f.height;
   const g = cv.getContext('2d');
   g.clearRect(0, 0, cv.width, cv.height);
+  try { g.filter = buildFilter(1, S.filter); } catch {}
   g.drawImage(f, 0, 0);
+  g.filter = 'none';
 
-  const o = AI.options[AI.index];
-  if (o) {
-    const cx = o.crop.x * cv.width, cy = o.crop.y * cv.height;
-    const cw = o.crop.w * cv.width, chh = o.crop.h * cv.height;
+  const s = AI.subj;
+  // 目标方框 + 主体圆圈
+  if (s) {
+    const ti = evaluate({ ...AI.a, subject: s }, { mode: S.mode, comp: S.comp, lookDir: S.lookDir, hasGyro: false });
+    const half = Math.max(0.04, s.w * 0.55);
+    const gx = ti.target.x - half, gy = ti.target.y - half;
     g.save();
-    g.fillStyle = 'rgba(0,0,0,.5)';
-    g.fillRect(0, 0, cv.width, cy);
-    g.fillRect(0, cy + chh, cv.width, cv.height - cy - chh);
-    g.fillRect(0, cy, cx, chh);
-    g.fillRect(cx + cw, cy, cv.width - cx - cw, chh);
+    g.setLineDash([9, 8]);
     g.strokeStyle = 'rgba(255,176,58,.95)';
     g.lineWidth = Math.max(2, cv.width * 0.004);
-    g.strokeRect(cx, cy, cw, chh);
-    g.fillStyle = 'rgba(255,255,255,.75)';
-    for (const q of [[1/3,1/3],[2/3,1/3],[1/3,2/3],[2/3,2/3]]) {
-      g.beginPath();
-      g.arc(cx + cw * q[0], cy + chh * q[1], Math.max(2, cv.width * 0.006), 0, 7);
-      g.fill();
-    }
-    g.restore();
-  } else if (AI.subj) {
-    g.strokeStyle = 'rgba(255,255,255,.8)';
+    g.strokeRect(gx * cv.width, gy * cv.height, half * 2 * cv.width, half * 2 * cv.height);
+    g.setLineDash([]);
+    g.font = `600 ${Math.max(11, cv.width * 0.022)}px -apple-system, system-ui, sans-serif`;
+    g.fillStyle = 'rgba(255,176,58,.95)';
+    g.fillText('把圆圈移进框', gx * cv.width + 2, Math.max(12, gy * cv.height - 5));
+    // 圆圈
+    g.strokeStyle = 'rgba(255,255,255,.95)';
     g.lineWidth = Math.max(2, cv.width * 0.004);
-    g.strokeRect(AI.subj.x * cv.width, AI.subj.y * cv.height, AI.subj.w * cv.width, AI.subj.h * cv.height);
+    const r = Math.max(10, cv.width * 0.035);
+    g.beginPath();
+    g.arc(s.cx * cv.width, s.cy * cv.height, r, 0, 7);
+    g.stroke();
+    g.restore();
   }
+
+  // 主体框
+  if (s) {
+    g.save();
+    g.strokeStyle = 'rgba(255,255,255,.9)';
+    g.lineWidth = Math.max(2, cv.width * 0.004);
+    g.strokeRect(s.x * cv.width, s.y * cv.height, s.w * cv.width, s.h * cv.height);
+    // 构图重心
+    g.strokeStyle = 'rgba(90,220,255,.95)';
+    g.beginPath();
+    const cx = s.cx * cv.width, cy = s.cy * cv.height, r = Math.max(5, cv.width * 0.012);
+    g.moveTo(cx - r, cy); g.lineTo(cx + r, cy);
+    g.moveTo(cx, cy - r); g.lineTo(cx, cy + r);
+    g.stroke();
+    g.restore();
+  }
+
+  // 选中的裁切方案
+  const o = AI.options[AI.index];
+  if (o) {
+    g.save();
+    g.setLineDash([4, 6]);
+    g.strokeStyle = 'rgba(120,228,255,.42)';
+    g.lineWidth = 1.4;
+    g.strokeRect(o.crop.x * cv.width, o.crop.y * cv.height, o.crop.w * cv.width, o.crop.h * cv.height);
+    g.restore();
+  }
+
+  const tag = s
+    ? `主体 ${pct(s.w * s.h)}% · 重心 ${Math.round(s.cx * 100)},${Math.round(s.cy * 100)}`
+    : '未识别到主体';
+  $('aiTag').textContent = tag;
 }
 
 async function useAIOption() {
-  const o = AI.options[AI.index];
-  if (!o || !AI.frame) return;
+  if (!AI.frame) return;
   const f = AI.frame;
+  const o = AI.options[AI.index];
   const out = document.createElement('canvas');
-  out.width = Math.max(2, Math.round(o.crop.w * f.width));
-  out.height = Math.max(2, Math.round(o.crop.h * f.height));
+  const crop = o ? o.crop : { x: 0, y: 0, w: 1, h: 1 };
+  out.width = Math.max(2, Math.round(crop.w * f.width));
+  out.height = Math.max(2, Math.round(crop.h * f.height));
   const g = out.getContext('2d');
   if (g.filter !== undefined) g.filter = buildFilter(1, S.filter);
-  g.drawImage(f, o.crop.x * f.width, o.crop.y * f.height, o.crop.w * f.width, o.crop.h * f.height,
+  g.drawImage(f, crop.x * f.width, crop.y * f.height, crop.w * f.width, crop.h * f.height,
     0, 0, out.width, out.height);
   finishCanvas(out.getContext('2d'), S.filter, metaNow(), S.opts.watermark);
   const blob = await canvasToBlob(out);
-  if (blob) { addPhoto(blob, o.score); flash(); vibrate(16); }
+  if (!blob) return;
+  addPhoto(blob, o ? o.score : 0);
+  flash();
+  vibrate(16);
   $('aiSheet').hidden = true;
-  toast(`已按「${o.name}」出片`);
+  toast(o ? `已按「${o.name}」出片` : '已保存');
 }
 
-async function saveAIOriginal() {
-  const f = AI.frame;
-  if (!f) return;
-  const out = document.createElement('canvas');
-  out.width = f.width;
-  out.height = f.height;
-  const g = out.getContext('2d');
-  if (g.filter !== undefined) g.filter = buildFilter(1, S.filter);
-  g.drawImage(f, 0, 0);
-  finishCanvas(g, S.filter, metaNow(), S.opts.watermark);
-  const blob = await canvasToBlob(out);
-  if (blob) { addPhoto(blob, S.ev ? S.ev.score : 0); flash(); }
-  $('aiSheet').hidden = true;
+function loadAIImage(file) {
+  if (!file) return;
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    const maxSide = 1600;
+    const k = Math.min(1, maxSide / Math.max(img.width, img.height));
+    const c = document.createElement('canvas');
+    c.width = Math.max(2, Math.round(img.width * k));
+    c.height = Math.max(2, Math.round(img.height * k));
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    URL.revokeObjectURL(url);
+    $('aiSheet').hidden = false;
+    $('aiSub').textContent = `本地图片 ${img.width}×${img.height}`;
+    analyzeStill(c);
+  };
+  img.onerror = () => { toast('这张图打不开'); URL.revokeObjectURL(url); };
+  img.src = url;
 }
 
 /* ===================== 视频模式：独立录制链路 ===================== */
@@ -1421,11 +1589,7 @@ function bindUI() {
     $('evVal').textContent = `${S.evBias > 0 ? '+' : ''}${S.evBias.toFixed(1)}`;
   });
 
-  $('btnAuto').addEventListener('click', () => {
-    S.auto = !S.auto;
-    $('btnAuto').classList.toggle('is-on', S.auto);
-    toast(S.auto ? '自动抓拍已开：构图到位自动按快门' : '自动抓拍已关');
-  });
+  bindCheck('optAuto', 'auto');
 
   document.querySelectorAll('.mode').forEach(b => {
     b.addEventListener('click', () => {
@@ -1494,7 +1658,13 @@ function bindUI() {
   $('btnAI').addEventListener('click', openAICompose);
   $('btnAIClose').addEventListener('click', () => { $('aiSheet').hidden = true; });
   $('btnAIUse').addEventListener('click', useAIOption);
-  $('btnAISave').addEventListener('click', saveAIOriginal);
+  $('btnAIRe').addEventListener('click', () => { if (AI.frame) analyzeStill(AI.frame); });
+  $('btnAIPick').addEventListener('click', () => $('aiFile').click());
+  $('aiFile').addEventListener('change', e => {
+    const f = e.target.files && e.target.files[0];
+    loadAIImage(f);
+    e.target.value = '';
+  });
   document.querySelectorAll('#aiZoomSeg button').forEach(b => {
     b.addEventListener('click', () => {
       AI.zoom = b.dataset.z;
@@ -1533,14 +1703,14 @@ function bindUI() {
   $('btnViewerSave').addEventListener('click', () => savePhoto(viewing));
 
   // 设置项
-  const bindCheck = (id, key, cb) => {
+  function bindCheck(id, key, cb) {
     const el = $(id);
     el.checked = !!S.opts[key];
     el.addEventListener('change', () => {
       S.opts[key] = el.checked;
       if (cb) cb(el.checked);
     });
-  };
+  }
   bindCheck('optGuide', 'guide');
   bindCheck('optLevel', 'level');
   bindCheck('optSubject', 'subject');

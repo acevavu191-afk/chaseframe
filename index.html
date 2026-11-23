@@ -92,7 +92,6 @@
         <svg viewBox="0 0 24 24"><path d="M4 9a8 8 0 0113.4-3.4L20 8M20 15A8 8 0 016.6 18.4L4 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M20 4v4h-4M4 20v-4h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <button id="btnExposure" class="rail-btn rail-text" title="曝光补偿">+0.0</button>
-      <button id="btnAI" class="rail-btn rail-text" title="AI 构图" style="font-size:10px">AI</button>
     </div>
 
     <!-- 变焦 -->
@@ -113,8 +112,9 @@
           <div class="score-title" id="scoreTitle">等待主体</div>
           <div class="score-detail" id="scoreDetail">把想拍的东西放进画面</div>
         </div>
-        <button id="btnAuto" class="auto-toggle" title="自动抓拍">
-          <span class="auto-dot"></span>自动
+        <button id="btnAI" class="ai-pill" title="AI 构图（静态图片分析）">
+          <svg viewBox="0 0 24 24"><path d="M12 3.5l1.7 4.6 4.6 1.7-4.6 1.7L12 16.1l-1.7-4.6L5.7 9.8l4.6-1.7L12 3.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+          AI 构图
         </button>
       </div>
 
@@ -199,21 +199,37 @@
   </section>
 
 
-  <!-- ============ AI 构图：冻结一帧后重新构图 ============ -->
+  <!-- ============ AI 构图：静态图片分析 ============ -->
   <section id="aiSheet" class="sheet ai-sheet" hidden>
     <div class="sheet-bar"></div>
     <div class="sheet-head">
       <b>AI 构图</b>
-      <span class="sheet-sub" id="aiSub">正在分析这一帧…</span>
+      <span class="sheet-sub" id="aiSub">静态图片 · 不追踪、不实时</span>
+      <button id="btnAIPick" class="mini-btn">选图</button>
       <button id="btnAIClose" class="mini-btn">关闭</button>
     </div>
     <div class="sheet-body ai-body">
+      <div class="ai-state" id="aiState"><i></i><span id="aiStateText">等待分析</span></div>
+
       <div class="ai-preview">
         <canvas id="aiCanvas"></canvas>
-        <div class="ai-tag" id="aiTag">识别中</div>
+        <div class="ai-tag" id="aiTag">—</div>
       </div>
+
+      <div class="ai-chips" id="aiChips"></div>
+      <ul class="ai-issues" id="aiIssues"></ul>
+
+      <div class="ai-dirs" id="aiDirs">
+        <button class="dir d-up" data-dir="up"><b>↑</b><span>上移</span></button>
+        <button class="dir d-left" data-dir="left"><b>←</b><span>左移</span></button>
+        <button class="dir d-right" data-dir="right"><b>→</b><span>右移</span></button>
+        <button class="dir d-down" data-dir="down"><b>↓</b><span>下移</span></button>
+        <div class="dir-center" id="aiDirCenter">判断中</div>
+      </div>
+      <p class="ai-move" id="aiMove">—</p>
+
       <div class="ai-row">
-        <span class="ai-label">景别</span>
+        <span class="ai-label">重新构图</span>
         <div class="seg" id="aiZoomSeg">
           <button data-z="loose" class="is-active">松</button>
           <button data-z="mid">中</button>
@@ -222,12 +238,12 @@
         <span class="ai-hint" id="aiAdvice"></span>
       </div>
       <div class="ai-cards" id="aiCards"></div>
-      <p class="fine" id="aiNote">选一个方案，按它重新裁切这一帧。</p>
     </div>
     <div class="ai-foot">
-      <button id="btnAIUse" class="btn-primary sm">用这个构图</button>
-      <button id="btnAISave" class="btn-ghost sm">保存原图</button>
+      <button id="btnAIUse" class="btn-primary sm">按建议出片</button>
+      <button id="btnAIRe" class="btn-ghost sm">重新分析</button>
     </div>
+    <input type="file" id="aiFile" accept="image/*" hidden />
   </section>
 
   <!-- ============ 设置抽屉 ============ -->
@@ -252,6 +268,7 @@
         <label class="row"><span>自动白平衡</span><input type="checkbox" id="optAwb" checked /><i class="sw"></i></label>
         <label class="row"><span>运动优先快门</span><input type="checkbox" id="optFast" checked /><i class="sw"></i></label>
         <label class="row"><span>硬件参数直写</span><input type="checkbox" id="optHw" checked /><i class="sw"></i></label>
+        <label class="row"><span>构图到位自动抓拍</span><input type="checkbox" id="optAuto" /><i class="sw"></i></label>
         <div class="row col">
           <span>曝光补偿 <b id="evVal">+0.0</b></span>
           <input type="range" id="optEv" min="-2" max="2" step="0.1" value="0" />

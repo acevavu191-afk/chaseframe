@@ -12,6 +12,17 @@
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
+/** 两个归一化框的重叠度 */
+function iou(a, b) {
+  if (!a || !b) return 0;
+  const x1 = Math.max(a.x, b.x), y1 = Math.max(a.y, b.y);
+  const x2 = Math.min(a.x + a.w, b.x + b.w), y2 = Math.min(a.y + a.h, b.y + b.h);
+  const iw = Math.max(0, x2 - x1), ih = Math.max(0, y2 - y1);
+  const inter = iw * ih;
+  const union = a.w * a.h + b.w * b.h - inter;
+  return union > 0 ? inter / union : 0;
+}
+
 export class FrameAnalyzer {
   constructor(analysisWidth = 208) {
     this.aw = analysisWidth;
@@ -312,6 +323,12 @@ export class FrameAnalyzer {
       if (asp > 5 || asp < 0.14) sc *= 0.5;
       if (kept < 3) sc *= 0.5;
 
+      // 时间一致性：和上一帧主体重叠的簇大幅加分，防止框"换人"
+      if (this.lastBox) {
+        const i = iou({ x: bx0 / gw, y: by0 / gh, w: bwN, h: bhN }, this.lastBox);
+        sc *= 1 + 2.6 * i;
+      }
+
       if (sc > bestScore) {
         bestScore = sc;
         best = {
@@ -325,8 +342,10 @@ export class FrameAnalyzer {
     }
 
     // ---------- 7. 主体时域平滑 ----------
-    // 显著簇莫名其妙横跨大半幅、而运动区更紧凑时，相信运动区
-    if (best && motionBox && best.w > 0.55 && motionBox.w < 0.6 && motionBox.h < 0.9) {
+    // 画面里确实有东西在动、而且运动区紧凑时，直接以运动区为主体。
+    // 拍运动物体时这才是用户真正想要的框，也比"显著簇"稳定得多。
+    if (motionBox && motionBox.w < 0.55 && motionBox.h < 0.85 &&
+        motionRatio > 0.015 && motionRatio < 0.35) {
       best = {
         area: clamp(mCount / gN, 0.004, 0.9),
         x: motionBox.x, y: motionBox.y,
@@ -334,6 +353,35 @@ export class FrameAnalyzer {
         cx: motionBox.cx, cy: motionBox.cy,
         kept: mCount, count: mCount,
       };
+    } else if (best && motionBox && best.w > 0.55 && motionBox.w < 0.6 && motionBox.h < 0.9) {
+      best = {
+        area: clamp(mCount / gN, 0.004, 0.9),
+        x: motionBox.x, y: motionBox.y,
+        w: motionBox.w, h: motionBox.h,
+        cx: motionBox.cx, cy: motionBox.cy,
+        kept: mCount, count: mCount,
+      };
+    }
+
+    // 跟踪锁定：新目标必须连续多帧胜出，才允许"换人"
+    if (best && this.lastBest && this.lastScore > 0) {
+      const keepIou = iou(best, this.lastBest);
+      if (keepIou > 0.2) {
+        this.challenger = null;               // 还是同一个目标
+      } else {
+        if (this.challenger && iou(best, this.challenger.box) > 0.25) {
+          this.challenger.count++;
+          this.challenger.box = best;
+        } else {
+          this.challenger = { box: best, count: 1 };
+        }
+        // 连续 6 帧、且明显更强，才切过去
+        if (this.challenger.count < 6 && bestScore < this.lastScore * 2.2) {
+          best = this.lastBest;
+        } else {
+          this.challenger = null;
+        }
+      }
     }
 
     let subject = null;
@@ -349,20 +397,34 @@ export class FrameAnalyzer {
     }
 
     if (subject) {
-      if (this.smoothBox) {
-        const a = 0.5, p = this.smoothBox;
-        const sw2 = clamp(p.w + (subject.w - p.w) * a, 0.02, 1);
-        const sh2 = clamp(p.h + (subject.h - p.h) * a, 0.02, 1);
-        subject = {
-          x: clamp(p.x + (subject.x - p.x) * a, 0, 1 - sw2),
-          y: clamp(p.y + (subject.y - p.y) * a, 0, 1 - sh2),
-          w: sw2, h: sh2,
-          cx: clamp(p.cx + (subject.cx - p.cx) * a, 0, 1),
-          cy: clamp(p.cy + (subject.cy - p.cy) * a, 0, 1),
-          area: p.area + (subject.area - p.area) * a,
-          keptCells: subject.keptCells,
-          clusterCells: subject.clusterCells,
-        };
+      const p0 = this.smoothBox;
+      if (p0) {
+        // 死区：变化很小就完全沿用上一帧
+        if (Math.abs(subject.cx - p0.cx) < 0.012 && Math.abs(subject.cy - p0.cy) < 0.012 &&
+            Math.abs(subject.area - p0.area) < 0.008) {
+          subject = p0;
+          this.lastBox = p0;
+          this.lastBest = p0;
+          this.lastScore = Math.max(this.lastScore, bestScore);
+        } else {
+          const a = 0.4;
+          const sw2 = clamp(p0.w + (subject.w - p0.w) * 0.25, 0.02, 1);
+          const sh2 = clamp(p0.h + (subject.h - p0.h) * 0.25, 0.02, 1);
+          // 单帧最多挪 5% 画面，挡住突跳
+          const step = 0.05;
+          const ncx = p0.cx + clamp(subject.cx - p0.cx, -step, step);
+          const ncy = p0.cy + clamp(subject.cy - p0.cy, -step, step);
+          subject = {
+            x: clamp(ncx - sw2 / 2, 0, 1 - sw2),
+            y: clamp(ncy - sh2 / 2, 0, 1 - sh2),
+            w: sw2, h: sh2,
+            cx: clamp(ncx, 0, 1),
+            cy: clamp(ncy, 0, 1),
+            area: p0.area + (subject.area - p0.area) * a,
+            keptCells: subject.keptCells,
+            clusterCells: subject.clusterCells,
+          };
+        }
       }
       this.smoothBox = subject;
       this.missCount = 0;
@@ -420,6 +482,9 @@ export class FrameAnalyzer {
       clutter = c ? clamp(e / c, 0, 1) : 0.5;
     }
 
+    if (best) { this.lastBest = best; this.lastScore = bestScore; }
+    if (subject) this.lastBox = subject;
+
     prev.set(gray);
     this._prevValid = true;
     this.prevTime = now;
@@ -446,6 +511,10 @@ export class FrameAnalyzer {
     this.prevSubjectCenter = null;
     this.smVx = 0;
     this.smVy = 0;
+    this.lastBox = null;
+    this.lastBest = null;
+    this.lastScore = 0;
+    this.challenger = null;
   }
 }
 
