@@ -869,7 +869,7 @@ function switchTab(tab) {
 function selectFilter(key) {
   S.filter = key;
   S.styleKey = null;
-  $('filterName').textContent = FILTERS[key].name;
+  $('filterName').textContent = key === 'none' ? '创作' : FILTERS[key].name;
   renderFilterGrid();
   renderStyleGrid();
   toast(`滤镜 · ${FILTERS[key].name}`);
@@ -1228,7 +1228,7 @@ window.addEventListener('unhandledrejection', e => {
 
 bindUI();
 $('gridLayer').dataset.mode = S.grid;
-$('filterName').textContent = FILTERS.none.name;
+$('filterName').textContent = S.filter === 'none' ? '创作' : FILTERS[S.filter].name;
 
 if (!DEBUG && 'serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
