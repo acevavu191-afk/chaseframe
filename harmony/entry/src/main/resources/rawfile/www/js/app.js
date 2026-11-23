@@ -48,6 +48,7 @@ const S = {
   hwEv: false,
   locked: null,
   capture: 'photo',
+  simple: true,
 };
 
 const camera = new Camera($('video'));
@@ -335,6 +336,8 @@ function drawOverlay(ts) {
 
     // 目标方框（四角括号 + 细边）
     octx.save();
+    octx.shadowColor = 'rgba(0,0,0,.75)';
+    octx.shadowBlur = 4;
     octx.strokeStyle = accent;
     octx.lineWidth = 2;
     const x0 = tc.x - half, y0 = tc.y - half, side = half * 2;
@@ -361,6 +364,8 @@ function drawOverlay(ts) {
     octx.fillText(tlabel, x0 + 5, y0 - 5);
 
     // 主体中心圆圈
+    octx.shadowColor = 'rgba(0,0,0,.75)';
+    octx.shadowBlur = 4;
     octx.strokeStyle = ok ? '#58d68d' : 'rgba(255,255,255,.95)';
     octx.lineWidth = 2.2;
     octx.beginPath(); octx.arc(sc.x, sc.y, ringR, 0, 7); octx.stroke();
@@ -393,7 +398,7 @@ function drawOverlay(ts) {
   }
 
   // ---- 运动：轨迹 + 预测 ----
-  if (a.motion && S.opts.track) {
+  if (a.motion && S.opts.track && !S.simple) {
     const m = a.motion;
     const m0 = toScreen(m.x, m.y), m1 = toScreen(m.x + m.w, m.y + m.h);
     octx.save();
@@ -547,6 +552,7 @@ function updateHud() {
   detailEl.classList.toggle('bad', ev.detailCls === 'bad');
 
   $('btnShutter').classList.toggle('armed', ev.ready);
+  updateBigHint();
 
   // EXIF 条
   const iso = S.evAdvice ? S.evAdvice.iso : 100;
@@ -991,6 +997,8 @@ async function boot() {
   S.running = true;
   layout();
   requestAnimationFrame(loop);
+  applyUIMode();
+  if (!ONBOARDED) $('onboard').hidden = false;
 }
 
 async function startCamera() {
@@ -1004,6 +1012,8 @@ async function startCamera() {
     S.hasGyro = await initGyro();
     renderCaps();
     await boot();
+    applyUIMode();
+    setTimeout(() => { stripThumb = null; renderFilterStrip(); }, 600);
     toast(`已连接 ${camera.size.w}×${camera.size.h}`);
     maybeInstallHint();
   } catch (e) {
@@ -1031,6 +1041,73 @@ async function initGyro() {
     }, true);
     return true;
   } catch { return false; }
+}
+
+function applyUIMode() {
+  $('viewfinder').classList.toggle('simple', S.simple);
+  $('btnMode').textContent = S.simple ? '简易' : '专业';
+  $('btnMode').classList.toggle('is-on', !S.simple);
+  try { localStorage.setItem('cf.simple', S.simple ? '1' : '0'); } catch {}
+  if (S.simple) renderFilterStrip();
+}
+
+const ARROW = { 左: '←', 右: '→', 上: '↑', 下: '↓', 左上: '↖', 右上: '↗', 左下: '↙', 右下: '↘' };
+
+function updateBigHint() {
+  const ev = S.ev;
+  if (!ev) return;
+  const box = $('bigHint');
+  const arrowEl = $('bhArrow');
+  const textEl = $('bhText');
+  if (!ev.hasSubject) {
+    box.classList.remove('good');
+    arrowEl.textContent = '◎';
+    textEl.textContent = '把想拍的东西放进画面';
+    return;
+  }
+  if (ev.ready) {
+    box.classList.add('good');
+    arrowEl.textContent = '✓';
+    textEl.textContent = '构图好了，按快门';
+    return;
+  }
+  box.classList.remove('good');
+  if (ev.moveDir) {
+    arrowEl.textContent = ARROW[ev.moveDir] || '→';
+    const big = ev.score < 55;
+    textEl.textContent = big ? `往${ev.moveDir}多移一点` : `往${ev.moveDir}移一点`;
+  } else {
+    arrowEl.textContent = '·';
+    textEl.textContent = ev.detail;
+  }
+}
+
+/* 滤镜速选条（Doka 风格） */
+let stripThumb = null;
+function renderFilterStrip() {
+  const box = $('filterStrip');
+  if (!box) return;
+  if (!stripThumb) stripThumb = snapshotThumb();
+  const picks = FEATURED.slice(0, 12);
+  box.innerHTML = '';
+  picks.forEach(key => {
+    const f = FILTERS[key];
+    if (!f) return;
+    const el = document.createElement('button');
+    el.className = 'fs-item' + (S.filter === key ? ' is-active' : '');
+    el.innerHTML = `
+      ${stripThumb ? `<img src="${stripThumb}" style="filter:${f.css}" alt="">` : ''}
+      <i style="${f.tint ? `background:${f.tint};mix-blend-mode:${f.blend || 'soft-light'}` : ''}"></i>
+      <span>${f.name.replace(/ · .*/, '')}</span>`;
+    el.addEventListener('click', () => {
+      S.filter = key;
+      S.styleKey = null;
+      $('filterName').textContent = f.name;
+      renderFilterStrip();
+      toast(`滤镜 · ${f.name}`);
+    });
+    box.appendChild(el);
+  });
 }
 
 function maybeInstallHint() {
@@ -1526,6 +1603,8 @@ function bindUI() {
     c.width = 720; c.height = 1280;
     S.hasGyro = false;
     await boot();
+    applyUIMode();
+    setTimeout(() => { stripThumb = null; renderFilterStrip(); }, 400);
     toast('演示画面：运动主体会来回跑');
   });
 
@@ -1657,6 +1736,22 @@ function bindUI() {
   $('btnCreateClose').addEventListener('click', () => { $('createSheet').hidden = true; });
   $('btnAI').addEventListener('click', openAICompose);
   $('btnAIClose').addEventListener('click', () => { $('aiSheet').hidden = true; });
+  $('btnMode').addEventListener('click', () => {
+    S.simple = !S.simple;
+    applyUIMode();
+    toast(S.simple ? '简易模式：只留必要的东西' : '专业模式：全部控件已展开');
+  });
+  $('btnObOk').addEventListener('click', () => {
+    $('onboard').hidden = true;
+    try { localStorage.setItem('cf.onboarded', '1'); } catch {}
+  });
+  $('btnObPro').addEventListener('click', () => {
+    $('onboard').hidden = true;
+    S.simple = false;
+    applyUIMode();
+    try { localStorage.setItem('cf.onboarded', '1'); } catch {}
+    toast('专业模式：所有构图方法与参数都在这里');
+  });
   $('btnAIUse').addEventListener('click', useAIOption);
   $('btnAIRe').addEventListener('click', () => { if (AI.frame) analyzeStill(AI.frame); });
   $('btnAIPick').addEventListener('click', () => $('aiFile').click());
@@ -1802,6 +1897,17 @@ function modeTip(m) {
 
 /* ===================== 启动 ===================== */
 tagPlatform();
+
+const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || '';
+try {
+  const sv = localStorage.getItem('cf.simple');
+  S.simple = sv === null ? true : sv === '1';
+} catch {}
+const ONBOARDED = (() => { try { return localStorage.getItem('cf.onboarded') === '1'; } catch { return false; } })();
+document.addEventListener('DOMContentLoaded', () => {
+  const el = $('verText');
+  if (el) el.textContent = APP_VERSION ? `v${APP_VERSION}` : '—';
+});
 
 window.addEventListener('error', e => {
   document.body.dataset.err = ((document.body.dataset.err || '') + '|' + (e.message || 'err')).slice(-400);

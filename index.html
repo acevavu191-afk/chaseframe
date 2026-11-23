@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <meta name="theme-color" content="#0a0a0c" />
-<meta name="app-version" content="1.1.1" /> />
+<meta name="app-version" content="1.2.0" /> /> />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="mobile-web-app-capable" content="yes" />
@@ -75,6 +75,7 @@
         <span class="exif-item" id="exifWb">AWB</span>
         <span class="exif-badge" id="exifMode">自动</span>
       </div>
+      <button id="btnMode" class="chip chip-text" title="切换简易/专业">简易</button>
       <button id="btnSettings" class="chip chip-icon" title="设置">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4L18 18M18 6l-1.6 1.6M7.6 16.4L6 18" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
       </button>
@@ -100,6 +101,11 @@
       <button class="z" data-z="1">1×</button>
       <button class="z" data-z="2">2×</button>
       <button class="z" data-z="3">3×</button>
+    </div>
+
+    <div id="bigHint" class="big-hint">
+      <span class="bh-arrow" id="bhArrow">↑</span>
+      <span class="bh-text" id="bhText">对准想拍的东西</span>
     </div>
 
     <!-- 底部控制 -->
@@ -133,6 +139,8 @@
         <button class="mode" data-mode="macro">微距</button>
         <button class="mode" data-mode="food">食物</button>
       </div>
+
+      <div class="filter-strip" id="filterStrip"></div>
 
       <div class="shutter-row">
         <button id="btnGallery" class="thumb" title="相册">
@@ -314,6 +322,22 @@
       <button id="btnViewerClose" class="mini-btn">返回</button>
       <span id="viewerMeta"></span>
       <button id="btnViewerSave" class="mini-btn accent">保存</button>
+    </div>
+  </section>
+
+  <section id="onboard" class="onboard" hidden>
+    <div class="ob-card">
+      <div class="ob-step">1</div>
+      <h2>对准想拍的东西</h2>
+      <p>白圈会套在主体上，方框是它该去的位置。</p>
+      <div class="ob-step">2</div>
+      <h2>跟着箭头移手机</h2>
+      <p>把白圈挪进方框里就行，不用懂构图。</p>
+      <div class="ob-step">3</div>
+      <h2>变绿就按快门</h2>
+      <p>框变绿 = 构图到位，直接拍。</p>
+      <button id="btnObOk" class="btn-primary">开始用</button>
+      <button id="btnObPro" class="btn-ghost">我是老手，打开专业模式</button>
     </div>
   </section>
 
