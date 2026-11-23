@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#0a0a0c" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="format-detection" content="telephone=no" />
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+<meta name="description" content="追帧 ChaseFrame — 免费 AI 构图相机，实时指导构图、自动设置参数、预测运动轨迹抓拍最佳瞬间。" />
+<title>追帧 · AI 构图相机</title>
+<link rel="manifest" href="./manifest.webmanifest" />
+<link rel="stylesheet" href="./css/app.css" />
+</head>
+<body>
+
+<div id="stage">
+
+  <!-- ============ 启动 / 权限 ============ -->
+  <section id="gate" class="gate">
+    <div class="gate-mark">
+      <svg viewBox="0 0 64 64" aria-hidden="true">
+        <circle cx="32" cy="32" r="21" fill="none" stroke="currentColor" stroke-width="1.6" opacity=".35"/>
+        <circle cx="32" cy="32" r="12.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M32 6v9M32 49v9M6 32h9M49 32h9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        <circle cx="32" cy="32" r="3.2" fill="currentColor"/>
+      </svg>
+    </div>
+    <h1>追帧<span>ChaseFrame</span></h1>
+    <p class="gate-sub">AI 构图指导 · 参数自动化 · 运动抓拍</p>
+
+    <div class="gate-points">
+      <div><b>构图</b>实时给你方向和分数，不用懂摄影</div>
+      <div><b>参数</b>曝光、ISO、快门、白平衡自动配</div>
+      <div><b>抓拍</b>预判运动轨迹，连拍选最佳瞬间</div>
+      <div><b>免费</b>无登录、无次数限制、无会员</div>
+    </div>
+
+    <button id="btnStart" class="btn-primary">开启相机</button>
+    <button id="btnDemo" class="btn-ghost">先用演示画面看看</button>
+    <p class="gate-fine" id="gateFine">需要相机权限 · 画面只在本机处理，不上传</p>
+  </section>
+
+  <!-- ============ 取景器 ============ -->
+  <main id="viewfinder" class="viewfinder" hidden>
+    <video id="video" playsinline muted autoplay></video>
+    <div id="demoCanvasWrap" class="demo-canvas-wrap" hidden><canvas id="demoCanvas"></canvas></div>
+
+    <!-- 构图网格 -->
+    <div id="gridLayer" class="grid-layer">
+      <div class="g g-thirds"><i></i><i></i><i></i><i></i></div>
+      <div class="g g-golden"><i></i><i></i><i></i><i></i></div>
+      <div class="g g-center"><i></i><i></i></div>
+      <div class="g g-level"><span id="horizonLine"></span></div>
+    </div>
+
+    <!-- 分析叠加层 -->
+    <canvas id="overlay" class="overlay"></canvas>
+
+    <!-- 取景遮罩（画幅比例） -->
+    <div id="cropMask" class="crop-mask"></div>
+
+    <!-- 顶部 HUD -->
+    <header class="hud-top">
+      <button id="btnClose" class="chip chip-icon" title="返回">
+        <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="exif-strip" id="exifStrip">
+        <span class="exif-item" id="exifIso">ISO —</span>
+        <span class="exif-item" id="exifShutter">1/—</span>
+        <span class="exif-item" id="exifEv">EV 0.0</span>
+        <span class="exif-item" id="exifWb">AWB</span>
+        <span class="exif-badge" id="exifMode">自动</span>
+      </div>
+      <button id="btnSettings" class="chip chip-icon" title="设置">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4L18 18M18 6l-1.6 1.6M7.6 16.4L6 18" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      </button>
+    </header>
+
+    <!-- 右侧工具条 -->
+    <div class="rail">
+      <button id="btnTorch" class="rail-btn" title="补光">
+        <svg viewBox="0 0 24 24"><path d="M9 3h6l-1.2 6.2H16L9.6 21l.9-7.4H6.4L9 3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+      </button>
+      <button id="btnGrid" class="rail-btn is-on" title="网格">
+        <svg viewBox="0 0 24 24"><path d="M9 4v16M15 4v16M4 9h16M4 15h16" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+      </button>
+      <button id="btnRatio" class="rail-btn rail-text" title="画幅">4:3</button>
+      <button id="btnFlip" class="rail-btn" title="切换镜头">
+        <svg viewBox="0 0 24 24"><path d="M4 9a8 8 0 0113.4-3.4L20 8M20 15A8 8 0 016.6 18.4L4 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M20 4v4h-4M4 20v-4h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button id="btnExposure" class="rail-btn rail-text" title="曝光补偿">+0.0</button>
+      <button id="btnAI" class="rail-btn rail-text" title="AI 构图" style="font-size:10px">AI</button>
+    </div>
+
+    <!-- 变焦 -->
+    <div class="zoom-bar" id="zoomBar">
+      <button class="z" data-z="1">1×</button>
+      <button class="z" data-z="2">2×</button>
+      <button class="z" data-z="3">3×</button>
+    </div>
+
+    <!-- 底部控制 -->
+    <footer class="hud-bottom">
+      <div class="score-row">
+        <div class="score-ring" id="scoreRing">
+          <svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="18.5" class="ring-bg"/><circle cx="22" cy="22" r="18.5" class="ring-fg" id="ringFg"/></svg>
+          <span id="scoreNum">--</span>
+        </div>
+        <div class="score-meta">
+          <div class="score-title" id="scoreTitle">等待主体</div>
+          <div class="score-detail" id="scoreDetail">把想拍的东西放进画面</div>
+        </div>
+        <button id="btnAuto" class="auto-toggle" title="自动抓拍">
+          <span class="auto-dot"></span>自动
+        </button>
+      </div>
+
+      <div class="cap-seg" id="capSeg">
+        <button data-cap="photo" class="is-active">照片</button>
+        <button data-cap="video">视频</button>
+      </div>
+
+      <div class="mode-scroll" id="modeScroll">
+        <button class="mode is-active" data-mode="smart">智能</button>
+        <button class="mode" data-mode="sport">运动</button>
+        <button class="mode" data-mode="portrait">人像</button>
+        <button class="mode" data-mode="landscape">风景</button>
+        <button class="mode" data-mode="night">夜景</button>
+        <button class="mode" data-mode="macro">微距</button>
+        <button class="mode" data-mode="food">食物</button>
+      </div>
+
+      <div class="shutter-row">
+        <button id="btnGallery" class="thumb" title="相册">
+          <img id="thumbImg" alt="" hidden />
+          <span id="thumbEmpty">相册</span>
+        </button>
+        <button id="btnShutter" class="shutter" title="拍摄">
+          <span class="shutter-core"></span>
+          <svg class="shutter-progress" viewBox="0 0 100 100"><circle cx="50" cy="50" r="46" id="burstRing"/></svg>
+        </button>
+        <button id="btnFilter" class="thumb thumb-filter" title="风格 / 滤镜 / 构图">
+          <span id="filterName">创作</span>
+        </button>
+      </div>
+    </footer>
+
+    <div id="recBadge" class="rec-badge" hidden><i></i><span id="recTime">00:00</span></div>
+
+    <!-- 连拍选优面板 -->
+    <div id="burstSheet" class="burst-sheet" hidden>
+      <div class="burst-head">
+        <b>最佳瞬间</b><span id="burstInfo">已连拍 0 张</span>
+        <button id="btnBurstClose" class="mini-btn">收起</button>
+      </div>
+      <div class="burst-strip" id="burstStrip"></div>
+      <div class="burst-actions">
+        <button id="btnBurstSave" class="btn-primary sm">保存这张</button>
+        <button id="btnBurstAll" class="btn-ghost sm">全部保存</button>
+      </div>
+    </div>
+  </main>
+
+
+  <!-- ============ 创作面板：风格 / 滤镜 / 构图 ============ -->
+  <section id="createSheet" class="sheet create-sheet" hidden>
+    <div class="sheet-bar"></div>
+    <div class="sheet-head">
+      <b>创作</b>
+      <span class="sheet-sub" id="createSub">选一个风格，参数和构图一起配好</span>
+      <button id="btnCreateClose" class="mini-btn">完成</button>
+    </div>
+    <div class="tabs" id="createTabs">
+      <button class="tab is-active" data-tab="style">风格</button>
+      <button class="tab" data-tab="filter">滤镜</button>
+      <button class="tab" data-tab="comp">构图</button>
+    </div>
+    <div class="sheet-body create-body">
+      <div class="tab-pane" id="paneStyle">
+        <div class="style-grid" id="styleGrid"></div>
+      </div>
+      <div class="tab-pane" id="paneFilter" hidden>
+        <div class="filter-top">
+          <input id="filterSearch" class="search" placeholder="搜索：portra / 黑白 / 夜景 / 电影" />
+          <span class="fcount" id="filterCount"></span>
+        </div>
+        <div class="chips" id="filterGroups"></div>
+        <div class="filter-grid" id="filterGrid"></div>
+        <button id="filterMore" class="more-btn" hidden>加载更多</button>
+      </div>
+      <div class="tab-pane" id="paneComp" hidden>
+        <div class="comp-list" id="compList"></div>
+        <p class="fine">选中的构图会画在取景框上；选「智能」则由算法每次自动判断。</p>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ============ AI 构图：冻结一帧后重新构图 ============ -->
+  <section id="aiSheet" class="sheet ai-sheet" hidden>
+    <div class="sheet-bar"></div>
+    <div class="sheet-head">
+      <b>AI 构图</b>
+      <span class="sheet-sub" id="aiSub">正在分析这一帧…</span>
+      <button id="btnAIClose" class="mini-btn">关闭</button>
+    </div>
+    <div class="sheet-body ai-body">
+      <div class="ai-preview">
+        <canvas id="aiCanvas"></canvas>
+        <div class="ai-tag" id="aiTag">识别中</div>
+      </div>
+      <div class="ai-row">
+        <span class="ai-label">景别</span>
+        <div class="seg" id="aiZoomSeg">
+          <button data-z="loose" class="is-active">松</button>
+          <button data-z="mid">中</button>
+          <button data-z="tight">紧</button>
+        </div>
+        <span class="ai-hint" id="aiAdvice"></span>
+      </div>
+      <div class="ai-cards" id="aiCards"></div>
+      <p class="fine" id="aiNote">选一个方案，按它重新裁切这一帧。</p>
+    </div>
+    <div class="ai-foot">
+      <button id="btnAIUse" class="btn-primary sm">用这个构图</button>
+      <button id="btnAISave" class="btn-ghost sm">保存原图</button>
+    </div>
+  </section>
+
+  <!-- ============ 设置抽屉 ============ -->
+  <section id="panel" class="sheet" hidden>
+    <div class="sheet-bar"></div>
+    <div class="sheet-head"><b>拍摄设置</b><button id="btnPanelClose" class="mini-btn">完成</button></div>
+    <div class="sheet-body">
+      <div class="group">
+        <div class="group-title">构图辅助</div>
+        <label class="row"><span>构图建议</span><input type="checkbox" id="optGuide" checked /><i class="sw"></i></label>
+        <label class="row"><span>网格线</span>
+          <select id="optGrid"><option value="thirds">三分法</option><option value="golden">黄金分割</option><option value="center">中心十字</option><option value="none">关闭</option></select>
+        </label>
+        <label class="row"><span>水平仪</span><input type="checkbox" id="optLevel" checked /><i class="sw"></i></label>
+        <label class="row"><span>主体锁定框</span><input type="checkbox" id="optSubject" checked /><i class="sw"></i></label>
+        <label class="row"><span>运动轨迹预测</span><input type="checkbox" id="optTrack" checked /><i class="sw"></i></label>
+      </div>
+
+      <div class="group">
+        <div class="group-title">自动参数</div>
+        <label class="row"><span>自动曝光</span><input type="checkbox" id="optAe" checked /><i class="sw"></i></label>
+        <label class="row"><span>自动白平衡</span><input type="checkbox" id="optAwb" checked /><i class="sw"></i></label>
+        <label class="row"><span>运动优先快门</span><input type="checkbox" id="optFast" checked /><i class="sw"></i></label>
+        <label class="row"><span>硬件参数直写</span><input type="checkbox" id="optHw" checked /><i class="sw"></i></label>
+        <div class="row col">
+          <span>曝光补偿 <b id="evVal">+0.0</b></span>
+          <input type="range" id="optEv" min="-2" max="2" step="0.1" value="0" />
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="group-title">出片</div>
+        <label class="row"><span>画幅比例</span>
+          <select id="optRatio"><option value="4:3">4:3</option><option value="16:9">16:9</option><option value="1:1">1:1</option><option value="9:16">9:16</option></select>
+        </label>
+        <label class="row"><span>参数水印</span><input type="checkbox" id="optWatermark" /><i class="sw"></i></label>
+        <label class="row"><span>保存后震动反馈</span><input type="checkbox" id="optHaptic" checked /><i class="sw"></i></label>
+      </div>
+
+      <div class="group">
+        <div class="group-title">设备能力</div>
+        <div class="caps" id="capsList">检测中…</div>
+      </div>
+
+      <p class="fine">画面全程在本机运算，不上传任何照片。构图与参数建议由本地算法给出，不依赖网络。</p>
+    </div>
+  </section>
+
+  <!-- ============ 相册 ============ -->
+  <section id="gallery" class="gallery" hidden>
+    <div class="gallery-head">
+      <b>本机相册</b>
+      <span id="galleryCount">0 张</span>
+      <button id="btnGalleryClose" class="mini-btn">关闭</button>
+    </div>
+    <div class="gallery-grid" id="galleryGrid"></div>
+    <div class="gallery-foot" id="galleryFoot">长按照片可保存到手机相册</div>
+  </section>
+
+  <!-- ============ 大图查看 ============ -->
+  <section id="viewer" class="viewer" hidden>
+    <img id="viewerImg" alt="照片" />
+    <video id="viewerVid" playsinline controls hidden></video>
+    <div class="viewer-bar">
+      <button id="btnViewerClose" class="mini-btn">返回</button>
+      <span id="viewerMeta"></span>
+      <button id="btnViewerSave" class="mini-btn accent">保存</button>
+    </div>
+  </section>
+
+  <div id="toast" class="toast"></div>
+  <div id="flashFx" class="flash-fx"></div>
+</div>
+
+<script type="module" src="./js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "chaseframe",
+  "version": "1.0.0",
+  "description": "追帧 ChaseFrame 鸿蒙外壳",
+  "dependencies": {}
+}

@@ -30,6 +30,9 @@ export const COMPOSITIONS = [
   { id: 'frame',    name: '框架',     desc: '用门洞、树枝、窗框把主体框起来', short: '框架' },
   { id: 'fill',     name: '满构图',   desc: '主体占满画面，强调质感与细节', short: '满格' },
   { id: 'rule',     name: '破局',     desc: '主体故意贴边，制造张力与不平衡', short: '破局' },
+  { id: 'negative', name: '负空间',   desc: '大面积留白托住主体，安静、有呼吸感', short: '留白' },
+  { id: 'scurve',   name: 'S 形曲线', desc: '用道路、河流的曲线把视线带到主体', short: 'S 线' },
+  { id: 'layer',    name: '层次',     desc: '前景—中景—背景三层，画面有纵深', short: '层次' },
 ];
 
 const COMP_POINTS = {
@@ -38,6 +41,9 @@ const COMP_POINTS = {
   center: [[0.5, 0.5]],
   diagonal: [[0.28, 0.28], [0.72, 0.72], [0.72, 0.28], [0.28, 0.72]],
   triangle: [[0.5, 0.3], [0.26, 0.74], [0.74, 0.74]],
+  negative: [[0.3, 0.4], [0.7, 0.4], [0.3, 0.62], [0.7, 0.62]],
+  layer: [[0.5, 0.52], [0.34, 0.5], [0.66, 0.5]],
+  scurve: [[0.62, 0.34], [0.38, 0.6]],
 };
 
 const TEMPLATES = [
@@ -79,6 +85,15 @@ function pickTarget(subject, mode, motion, comp = 'auto', lookDir = 'right') {
   }
   if (comp === 'fill') {
     return { x: 0.5, y: 0.5, tpl: { id: 'fill', name: '满构图' }, d: 0 };
+  }
+  if (comp === 'scurve') {
+    return { x: subject.cx < 0.5 ? 0.38 : 0.62, y: clamp(subject.cy, 0.32, 0.62), tpl: { id: 'scurve', name: 'S 形曲线' }, d: 0 };
+  }
+  if (comp === 'negative') {
+    return { x: subject.cx < 0.5 ? 0.32 : 0.68, y: clamp(subject.cy, 0.34, 0.6), tpl: { id: 'negative', name: '负空间' }, d: 0 };
+  }
+  if (comp === 'layer') {
+    return { x: 0.5, y: 0.56, tpl: { id: 'layer', name: '层次' }, d: 0 };
   }
   if (comp === 'frame') {
     return { x: 0.5, y: clamp(subject.cy, 0.35, 0.6), tpl: { id: 'frame', name: '框架' }, d: 0 };
@@ -162,6 +177,7 @@ export function evaluate(a, o = {}) {
     // 某些构图不看"落在哪个点"，而看别的量
     const comp = o.comp || 'auto';
     if (comp === 'fill') posScore = clamp(subject.area / 0.3, 0, 1);
+    else if (comp === 'negative') posScore = posScore * (0.6 + 0.4 * clamp(1 - a.clutter * 1.6, 0, 1));
     else if (comp === 'symmetry') posScore = clamp(1 - Math.abs(subject.cx - 0.5) / 0.24, 0, 1);
 
     const [lo, hi] = cfg.ideal;

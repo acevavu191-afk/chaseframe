@@ -1,5 +1,5 @@
 /* 追帧 ChaseFrame — 离线缓存（Network-first for html, cache-first for assets） */
-const CACHE = 'chaseframe-v2';
+const CACHE = 'chaseframe-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -9,6 +9,7 @@ const ASSETS = [
   './js/compose.js',
   './js/camera.js',
   './js/filters.js',
+  './js/platform.js',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',

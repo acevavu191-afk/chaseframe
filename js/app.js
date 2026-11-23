@@ -2,9 +2,10 @@
  * app.js — 追帧 ChaseFrame 主控
  */
 import { FrameAnalyzer, measureSharp } from './vision.js';
+import { PLATFORM, tagPlatform, vibrate as pVibrate, shouldPromptInstall, saveHint, pickVideoMime } from './platform.js';
 import { evaluate, MODES, COMPOSITIONS, exposureAdvice, shutterAdvice, predictSubject } from './compose.js';
 import { Camera, describeCaps } from './camera.js';
-import { FILTERS, FILTER_GROUPS, STYLES, filterCss, buildFilter, finishCanvas, canvasToBlob, downloadBlob, shareBlob, saveToDevice, hasNative, stamp } from './filters.js';
+import { FILTERS, FILTER_FAMILIES, FILTER_COUNT, FEATURED, STYLES, filterCss, buildFilter, finishCanvas, canvasToBlob, downloadBlob, shareBlob, saveToDevice, hasNative, stamp } from './filters.js';
 
 const $ = id => document.getElementById(id);
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -16,7 +17,9 @@ const S = {
   ratio: '4:3',
   filter: 'none',
   styleKey: null,
-  filterGroup: 'basic',
+  filterGroup: 'feat',
+  filterQuery: '',
+  filterLimit: 36,
   comp: 'auto',
   lookDir: 'right',
   torch: false,
@@ -43,6 +46,7 @@ const S = {
   gain: 1,
   hwEv: false,
   locked: null,
+  capture: 'photo',
 };
 
 const camera = new Camera($('video'));
@@ -481,6 +485,19 @@ function drawCompGuide() {
     case 'fill':
       octx.strokeRect(r.x + 4, r.y + 4, r.w - 8, r.h - 8);
       break;
+    case 'scurve': {
+      octx.beginPath();
+      octx.moveTo(r.x + r.w * 0.78, r.y + r.h * 0.08);
+      octx.bezierCurveTo(r.x + r.w * 0.2, r.y + r.h * 0.3, r.x + r.w * 0.95, r.y + r.h * 0.55, r.x + r.w * 0.34, r.y + r.h * 0.92);
+      octx.stroke();
+      break;
+    }
+    case 'negative':
+      octx.strokeRect(r.x + r.w * 0.5, r.y + r.h * 0.2, r.w * 0.42, r.h * 0.55);
+      break;
+    case 'layer':
+      for (const y of [0.24, 0.52, 0.8]) hline(y);
+      break;
     case 'rule':
       octx.beginPath(); octx.moveTo(r.x + r.w * 0.14, r.y); octx.lineTo(r.x + r.w * 0.14, r.y + r.h);
       octx.moveTo(r.x + r.w * 0.86, r.y); octx.lineTo(r.x + r.w * 0.86, r.y + r.h); octx.stroke();
@@ -558,7 +575,7 @@ function flash() {
   f.classList.add('fire');
 }
 function vibrate(ms = 18) {
-  if (S.opts.haptic && navigator.vibrate) { try { navigator.vibrate(ms); } catch {} }
+  if (S.opts.haptic) pVibrate(ms);
 }
 
 function grabTo(canvas) {
@@ -724,7 +741,9 @@ function renderGallery() {
   for (const p of S.photos) {
     const cell = document.createElement('div');
     cell.className = 'cell';
-    cell.innerHTML = `<img src="${p.url}" alt=""><span class="tag">${p.score}</span>`;
+    cell.innerHTML = p.type === 'video'
+      ? `<video src="${p.url}" muted playsinline></video><span class="vbadge">▶ 视频</span><span class="tag">${p.score}</span>`
+      : `<img src="${p.url}" alt=""><span class="tag">${p.score}</span>`;
     cell.addEventListener('click', () => openViewer(p));
     grid.appendChild(cell);
   }
@@ -733,17 +752,27 @@ function renderGallery() {
 let viewing = null;
 function openViewer(p) {
   viewing = p;
-  $('viewerImg').src = p.url;
+  const isVid = p.type === 'video';
+  $('viewerImg').hidden = isVid;
+  $('viewerVid').hidden = !isVid;
+  if (isVid) {
+    $('viewerVid').src = p.url;
+    try { $('viewerVid').play().catch(() => {}); } catch {}
+  } else {
+    $('viewerImg').src = p.url;
+  }
   const m = p.meta || {};
-  $('viewerMeta').textContent = `${m.shutter || ''} · ISO${m.iso || ''} · ${m.mode || ''}`;
+  $('viewerMeta').textContent = isVid
+    ? `视频 · ${m.mode || ''}`
+    : `${m.shutter || ''} · ISO${m.iso || ''} · ${m.mode || ''}`;
   $('viewer').hidden = false;
 }
 
 async function savePhoto(p) {
   if (!p) return;
-  const name = `chaseframe_${stamp()}.jpg`;
+  const name = `chaseframe_${stamp()}.${p.type === 'video' ? (p.ext || 'webm') : 'jpg'}`;
   const where = await saveToDevice(p.blob, name);
-  toast(where === 'gallery' ? '已存入系统相册' : where === 'share' ? '已发送到系统分享' : '已保存到下载目录');
+  toast(where === 'gallery' ? '已存入系统相册' : where === 'share' ? saveHint() : '已保存到下载目录');
 }
 
 /* ===================== 创作面板：风格 / 滤镜 / 构图 ===================== */
@@ -785,34 +814,70 @@ function renderStyleGrid() {
   });
 }
 
+const FAV_KEY = 'cf.fav';
+let favSet = new Set();
+try { favSet = new Set(JSON.parse(localStorage.getItem(FAV_KEY) || '[]')); } catch { favSet = new Set(); }
+const saveFav = () => { try { localStorage.setItem(FAV_KEY, JSON.stringify([...favSet])); } catch {} };
+
 function renderFilterGroups() {
   const box = $('filterGroups');
   box.innerHTML = '';
-  FILTER_GROUPS.forEach(g => {
+  FILTER_FAMILIES.forEach(g => {
     const b = document.createElement('button');
     b.className = 'chip-btn' + (S.filterGroup === g.id ? ' is-active' : '');
     b.textContent = g.name;
-    b.addEventListener('click', () => { S.filterGroup = g.id; renderFilterGroups(); renderFilterGrid(); });
+    b.addEventListener('click', () => {
+      S.filterGroup = g.id;
+      S.filterLimit = 36;
+      renderFilterGroups();
+      renderFilterGrid();
+    });
     box.appendChild(b);
   });
+}
+
+function filteredList() {
+  let list = Object.entries(FILTERS);
+  if (S.filterGroup === 'feat') {
+    const set = new Set(FEATURED);
+    list = list.filter(([k]) => set.has(k));
+  } else if (S.filterGroup === 'fav') list = list.filter(([k]) => favSet.has(k));
+  else if (S.filterGroup !== 'all') list = list.filter(([, f]) => f.family === S.filterGroup);
+  const q = S.filterQuery.trim().toLowerCase();
+  if (q) {
+    list = list.filter(([, f]) =>
+      (f.name + ' ' + (f.short || '') + ' ' + (f.tag || '') + ' ' + f.family).toLowerCase().includes(q));
+  }
+  // 收藏的排前面，其余保持母版顺序
+  list.sort((a, b) => (favSet.has(b[0]) ? 1 : 0) - (favSet.has(a[0]) ? 1 : 0));
+  return list;
 }
 
 function renderFilterGrid() {
   const box = $('filterGrid');
   const thumb = thumbCache;
+  const list = filteredList();
+  const shown = list.slice(0, S.filterLimit);
   box.innerHTML = '';
-  Object.entries(FILTERS)
-    .filter(([, f]) => f.group === S.filterGroup)
-    .forEach(([key, f]) => {
-      const el = document.createElement('button');
-      el.className = 'filter-item' + (S.filter === key ? ' is-active' : '');
-      el.innerHTML = `
-        ${thumb ? `<img src="${thumb}" style="filter:${f.css}" alt="">` : ''}
-        <i style="${tintLayer(f)}"></i>
-        <span>${f.name}</span>`;
-      el.addEventListener('click', () => selectFilter(key));
-      box.appendChild(el);
+  shown.forEach(([key, f]) => {
+    const el = document.createElement('button');
+    el.className = 'filter-item' + (S.filter === key ? ' is-active' : '');
+    el.innerHTML = `
+      ${thumb ? `<img src="${thumb}" style="filter:${f.css}" alt="">` : ''}
+      <i style="${tintLayer(f)}"></i>
+      <b class="fav ${favSet.has(key) ? 'on' : ''}">★</b>
+      <span>${f.name}</span>`;
+    el.addEventListener('click', () => selectFilter(key));
+    el.querySelector('.fav').addEventListener('click', ev => {
+      ev.stopPropagation();
+      if (favSet.has(key)) favSet.delete(key); else favSet.add(key);
+      saveFav();
+      renderFilterGrid();
     });
+    box.appendChild(el);
+  });
+  $('filterCount').textContent = `${FILTER_COUNT} 组 · 显示 ${shown.length}`;
+  $('filterMore').hidden = list.length <= S.filterLimit;
 }
 
 const COMP_SVG = {
@@ -862,7 +927,7 @@ function switchTab(tab) {
   $('paneFilter').hidden = tab !== 'filter';
   $('paneComp').hidden = tab !== 'comp';
   $('createSub').textContent = tab === 'style' ? '一个风格 = 滤镜 + 画幅 + 拍摄模式 + 构图'
-    : tab === 'filter' ? '54 组，含胶片模拟与流行色调'
+    : tab === 'filter' ? `${FILTER_COUNT} 组 · 可搜索、可收藏`
     : '12 种构图法，选中即画在取景框上';
 }
 
@@ -931,6 +996,7 @@ async function startCamera() {
     renderCaps();
     await boot();
     toast(`已连接 ${camera.size.w}×${camera.size.h}`);
+    maybeInstallHint();
   } catch (e) {
     console.error(e);
     $('btnStart').textContent = '开启相机';
@@ -958,6 +1024,13 @@ async function initGyro() {
   } catch { return false; }
 }
 
+function maybeInstallHint() {
+  if (!shouldPromptInstall()) return;
+  if (sessionStorage.getItem('cf.installHint')) return;
+  sessionStorage.setItem('cf.installHint', '1');
+  setTimeout(() => toast('iOS：点底部「分享」→「添加到主屏幕」，就能全屏当 App 用', 6500), 1500);
+}
+
 function renderCaps() {
   const box = $('capsList');
   const items = describeCaps(camera.caps);
@@ -967,6 +1040,310 @@ function renderCaps() {
       b.disabled = Number(b.dataset.z) > camera.caps.zoom.max;
     });
   }
+}
+
+/* ===================== AI 构图：冻结一帧，重新构图 ===================== */
+const AI_ZOOM = { loose: 0.2, mid: 0.32, tight: 0.46 };
+const AI = { frame: null, a: null, subj: null, motion: null, options: [], index: 0, zoom: 'mid' };
+
+function openAICompose() {
+  const c = document.createElement('canvas');
+  grabTo(c);
+  if (!c || !c.width) { toast('画面还没准备好'); return; }
+  const an = new FrameAnalyzer(208);
+  an.reset();
+  const a = an.analyze(c, performance.now());
+  if (!a) { toast('这一帧读不出来，稍后再试'); return; }
+
+  AI.frame = c;
+  AI.a = a;
+  AI.subj = a.subject;
+  AI.motion = a.motion;
+  AI.index = 0;
+  AI.zoom = 'mid';
+
+  $('aiSheet').hidden = false;
+  $('aiTag').textContent = a.subject
+    ? `识别到主体 · 占画面 ${(a.subject.area * 100).toFixed(0)}%`
+    : '没找到明确主体 · 按中心构图';
+  $('aiAdvice').textContent = a.motion
+    ? `运动 ${(a.motion.speed * 100).toFixed(0)}%/s`
+    : '静态画面';
+
+  buildAIOptions();
+  $('aiSub').textContent = `已分析这一帧 · ${AI.options.length} 个方案`;
+}
+
+function aiTargets() {
+  const list = ['thirds', 'center', 'fill'];
+  if (AI.motion && AI.motion.speed > 0.06) list.push('leading');
+  else list.push('negative');
+  return list;
+}
+
+function computeCrop(subj, target, fillFrac, frameAspect) {
+  const s = subj || { cx: 0.5, cy: 0.5, w: 0.36, h: 0.5, area: 0.18 };
+  let cw = clamp(s.w / fillFrac, 0.34, 1);
+  let ch = cw / frameAspect;
+  if (ch > 1) { ch = 1; cw = ch * frameAspect; }
+  const realW = Math.min(1, cw);
+  const x = clamp(s.cx - target.x * realW, 0, 1 - realW);
+  const y = clamp(s.cy - target.y * ch, 0, 1 - ch);
+  return { x, y, w: realW, h: ch };
+}
+
+function buildAIOptions() {
+  const f = AI.frame;
+  const a = AI.a;
+  const frameAspect = f.width / f.height;
+  const fill = AI_ZOOM[AI.zoom];
+  const comps = aiTargets();
+  const cards = [];
+
+  comps.forEach(id => {
+    const meta = COMPOSITIONS.find(c => c.id === id) || { name: id };
+    const probe = evaluate(
+      { ...a, subject: AI.subj || { x: 0.32, y: 0.3, w: 0.36, h: 0.44, cx: 0.5, cy: 0.52, area: 0.16 } },
+      { mode: S.mode, comp: id, lookDir: S.lookDir, hasGyro: false, evBias: S.evBias }
+    );
+    const target = { x: probe.target.x, y: probe.target.y };
+    const crop = computeCrop(AI.subj, target, fill, frameAspect);
+
+    const th = document.createElement('canvas');
+    th.width = 200;
+    th.height = Math.max(2, Math.round(200 / frameAspect));
+    th.getContext('2d').drawImage(
+      f, crop.x * f.width, crop.y * f.height, crop.w * f.width, crop.h * f.height,
+      0, 0, th.width, th.height
+    );
+
+    const newArea = AI.subj ? clamp(AI.subj.area / (crop.w * crop.h), 0.005, 0.95) : 0.16;
+    const a2 = {
+      ...a,
+      subject: AI.subj
+        ? { ...AI.subj, cx: target.x, cy: target.y, area: newArea,
+            x: clamp(target.x - AI.subj.w / 2 / crop.w, 0, 1),
+            y: clamp(target.y - AI.subj.h / 2 / crop.h, 0, 1),
+            w: clamp(AI.subj.w / crop.w, 0.01, 1), h: clamp(AI.subj.h / crop.h, 0.01, 1) }
+        : null,
+    };
+    const score = evaluate(a2, { mode: S.mode, comp: id, lookDir: S.lookDir, hasGyro: false, evBias: S.evBias });
+
+    cards.push({
+      id, name: meta.name, crop, thumb: th.toDataURL('image/jpeg', 0.72),
+      score: score.score, detail: score.detail, target,
+    });
+  });
+
+  cards.sort((x, y) => y.score - x.score);
+  AI.options = cards;
+  AI.index = 0;
+  renderAICards();
+}
+
+function renderAICards() {
+  const box = $('aiCards');
+  box.innerHTML = '';
+  AI.options.forEach((o, i) => {
+    const el = document.createElement('button');
+    el.className = 'ai-card' + (i === AI.index ? ' is-active' : '');
+    el.innerHTML = `<img src="${o.thumb}" alt=""><div class="am"><div class="an">${o.name}</div><div class="as">构图 ${o.score}</div></div>`;
+    el.addEventListener('click', () => {
+      AI.index = i;
+      renderAICards();
+      drawAIPreview();
+    });
+    box.appendChild(el);
+  });
+  drawAIPreview();
+  const cur = AI.options[AI.index];
+  $('aiNote').textContent = cur
+    ? `${cur.name} · ${cur.score} 分 — ${cur.detail}`
+    : '选一个方案，按它重新裁切这一帧。';
+}
+
+function drawAIPreview() {
+  const f = AI.frame;
+  if (!f) return;
+  const cv = $('aiCanvas');
+  cv.width = f.width;
+  cv.height = f.height;
+  const g = cv.getContext('2d');
+  g.clearRect(0, 0, cv.width, cv.height);
+  g.drawImage(f, 0, 0);
+
+  const o = AI.options[AI.index];
+  if (o) {
+    const cx = o.crop.x * cv.width, cy = o.crop.y * cv.height;
+    const cw = o.crop.w * cv.width, chh = o.crop.h * cv.height;
+    g.save();
+    g.fillStyle = 'rgba(0,0,0,.5)';
+    g.fillRect(0, 0, cv.width, cy);
+    g.fillRect(0, cy + chh, cv.width, cv.height - cy - chh);
+    g.fillRect(0, cy, cx, chh);
+    g.fillRect(cx + cw, cy, cv.width - cx - cw, chh);
+    g.strokeStyle = 'rgba(255,176,58,.95)';
+    g.lineWidth = Math.max(2, cv.width * 0.004);
+    g.strokeRect(cx, cy, cw, chh);
+    g.fillStyle = 'rgba(255,255,255,.75)';
+    for (const q of [[1/3,1/3],[2/3,1/3],[1/3,2/3],[2/3,2/3]]) {
+      g.beginPath();
+      g.arc(cx + cw * q[0], cy + chh * q[1], Math.max(2, cv.width * 0.006), 0, 7);
+      g.fill();
+    }
+    g.restore();
+  } else if (AI.subj) {
+    g.strokeStyle = 'rgba(255,255,255,.8)';
+    g.lineWidth = Math.max(2, cv.width * 0.004);
+    g.strokeRect(AI.subj.x * cv.width, AI.subj.y * cv.height, AI.subj.w * cv.width, AI.subj.h * cv.height);
+  }
+}
+
+async function useAIOption() {
+  const o = AI.options[AI.index];
+  if (!o || !AI.frame) return;
+  const f = AI.frame;
+  const out = document.createElement('canvas');
+  out.width = Math.max(2, Math.round(o.crop.w * f.width));
+  out.height = Math.max(2, Math.round(o.crop.h * f.height));
+  const g = out.getContext('2d');
+  if (g.filter !== undefined) g.filter = buildFilter(1, S.filter);
+  g.drawImage(f, o.crop.x * f.width, o.crop.y * f.height, o.crop.w * f.width, o.crop.h * f.height,
+    0, 0, out.width, out.height);
+  finishCanvas(out.getContext('2d'), S.filter, metaNow(), S.opts.watermark);
+  const blob = await canvasToBlob(out);
+  if (blob) { addPhoto(blob, o.score); flash(); vibrate(16); }
+  $('aiSheet').hidden = true;
+  toast(`已按「${o.name}」出片`);
+}
+
+async function saveAIOriginal() {
+  const f = AI.frame;
+  if (!f) return;
+  const out = document.createElement('canvas');
+  out.width = f.width;
+  out.height = f.height;
+  const g = out.getContext('2d');
+  if (g.filter !== undefined) g.filter = buildFilter(1, S.filter);
+  g.drawImage(f, 0, 0);
+  finishCanvas(g, S.filter, metaNow(), S.opts.watermark);
+  const blob = await canvasToBlob(out);
+  if (blob) { addPhoto(blob, S.ev ? S.ev.score : 0); flash(); }
+  $('aiSheet').hidden = true;
+}
+
+/* ===================== 视频模式：独立录制链路 ===================== */
+const REC = { rec: null, chunks: [], canvas: null, raf: 0, t0: 0, timer: 0, audio: null, mime: '' };
+
+function setCaptureMode(mode) {
+  if (REC.rec) { toast('先停止录制'); return; }
+  S.capture = mode;
+  document.querySelectorAll('#capSeg button').forEach(b => {
+    b.classList.toggle('is-active', b.dataset.cap === mode);
+  });
+  $('btnShutter').classList.toggle('recording', mode === 'video');
+  toast(mode === 'video' ? '视频模式：点快门开始，再点停止' : '照片模式');
+}
+
+function recTick() {
+  const t = Math.floor((performance.now() - REC.t0) / 1000);
+  $('recTime').textContent = `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+}
+
+async function startRecording() {
+  const box = layout();
+  if (!box) { toast('画面还没准备好'); return; }
+  // 先给反馈，再等权限/编码器初始化
+  $('recBadge').hidden = false;
+  $('recTime').textContent = '00:00';
+  REC.t0 = performance.now();
+  const src = S.demo ? $('demoCanvas') : $('video');
+  const maxW = 1280;
+  const k = Math.min(1, maxW / box.src.sw);
+  const c = document.createElement('canvas');
+  c.width = Math.max(2, Math.round(box.src.sw * k / 2) * 2);
+  c.height = Math.max(2, Math.round(box.src.sh * k / 2) * 2);
+  const g = c.getContext('2d');
+  const filter = buildFilter(S.gain, S.filter);
+
+  const draw = () => {
+    if (g.filter !== undefined) g.filter = filter;
+    g.drawImage(src, box.src.sx, box.src.sy, box.src.sw, box.src.sh, 0, 0, c.width, c.height);
+    REC.raf = requestAnimationFrame(draw);
+  };
+  draw();
+
+  let stream;
+  try {
+    stream = c.captureStream(30);
+  } catch (e) {
+    toast('这台设备不支持画布录制');
+    cancelAnimationFrame(REC.raf);
+    $('recBadge').hidden = true;
+    return;
+  }
+
+  try {
+    const as = await navigator.mediaDevices.getUserMedia({ audio: true });
+    REC.audio = as;
+    as.getAudioTracks().forEach(t => stream.addTrack(t));
+  } catch { REC.audio = null; }
+
+  const mime = pickVideoMime();
+  if (mime === null) { toast('这台设备不支持录制'); cancelAnimationFrame(REC.raf); $('recBadge').hidden = true; return; }
+
+  let rec;
+  try {
+    rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 6000000 } : undefined);
+  } catch {
+    try { rec = new MediaRecorder(stream); } catch { toast('录制启动失败'); cancelAnimationFrame(REC.raf); $('recBadge').hidden = true; return; }
+  }
+
+  REC.rec = rec;
+  REC.canvas = c;
+  REC.chunks = [];
+  REC.mime = rec.mimeType || mime || 'video/webm';
+  rec.ondataavailable = e => { if (e.data && e.data.size) REC.chunks.push(e.data); };
+  rec.onstop = () => finishRecording();
+  rec.start(500);
+
+  REC.timer = setInterval(recTick, 500);
+  vibrate(20);
+}
+
+function stopRecording() {
+  if (!REC.rec) return;
+  try { REC.rec.stop(); } catch {}
+}
+
+async function finishRecording() {
+  clearInterval(REC.timer);
+  cancelAnimationFrame(REC.raf);
+  $('recBadge').hidden = true;
+  if (REC.audio) { REC.audio.getTracks().forEach(t => t.stop()); REC.audio = null; }
+
+  const type = REC.mime || 'video/webm';
+  const blob = new Blob(REC.chunks, { type });
+  REC.rec = null;
+  REC.chunks = [];
+  if (!blob.size) { toast('这段没录上，重试一次'); return; }
+
+  const ext = type.includes('mp4') ? 'mp4' : 'webm';
+  const url = URL.createObjectURL(blob);
+  S.photos.unshift({
+    blob, url, score: S.ev ? S.ev.score : 0, meta: metaNow(),
+    id: Date.now() + Math.random(), type: 'video', ext,
+  });
+  renderGallery();
+  const img = $('thumbImg');
+  img.src = url; img.hidden = false;
+  $('thumbEmpty').hidden = true;
+  if (hasNative()) {
+    saveToDevice(blob, `chaseframe_${stamp()}.${ext}`).then(() => toast('视频已保存'));
+  } else {
+    toast('录制完成 · 点左下角相册保存');
+  }
+  vibrate(30);
 }
 
 function bindUI() {
@@ -1020,7 +1397,7 @@ function bindUI() {
   });
 
   $('btnRatio').addEventListener('click', () => {
-    const order = ['4:3', '16:9', '1:1', '9:16'];
+    const order = ['4:3', '16:9', '1:1', '5:4', '9:16'];
     S.ratio = order[(order.indexOf(S.ratio) + 1) % order.length];
     $('btnRatio').textContent = S.ratio;
     $('optRatio').value = S.ratio;
@@ -1083,16 +1460,28 @@ function bindUI() {
   let holdTimer = null, holdFired = false;
   shutter.addEventListener('pointerdown', () => {
     holdFired = false;
-    holdTimer = setTimeout(() => { holdFired = true; burst(12); }, 420);
+    holdTimer = setTimeout(() => {
+      if (S.capture === 'video') return;
+      holdFired = true;
+      burst(12);
+    }, 420);
   });
   shutter.addEventListener('pointerup', () => {
     clearTimeout(holdTimer);
     if (!holdFired) {
+      if (S.capture === 'video') {
+        if (REC.rec) stopRecording(); else startRecording();
+        return;
+      }
       // 运动模式：单击即连拍选优；其他模式单拍
       if (S.mode === 'sport') burst(10); else capture('manual');
     }
   });
   shutter.addEventListener('pointerleave', () => clearTimeout(holdTimer));
+
+  document.querySelectorAll('#capSeg button').forEach(b => {
+    b.addEventListener('click', () => setCaptureMode(b.dataset.cap));
+  });
 
   $('btnGallery').addEventListener('click', () => {
     $('gallery').hidden = false;
@@ -1102,6 +1491,26 @@ function bindUI() {
 
   $('btnFilter').addEventListener('click', () => openCreate('style'));
   $('btnCreateClose').addEventListener('click', () => { $('createSheet').hidden = true; });
+  $('btnAI').addEventListener('click', openAICompose);
+  $('btnAIClose').addEventListener('click', () => { $('aiSheet').hidden = true; });
+  $('btnAIUse').addEventListener('click', useAIOption);
+  $('btnAISave').addEventListener('click', saveAIOriginal);
+  document.querySelectorAll('#aiZoomSeg button').forEach(b => {
+    b.addEventListener('click', () => {
+      AI.zoom = b.dataset.z;
+      document.querySelectorAll('#aiZoomSeg button').forEach(x => x.classList.toggle('is-active', x === b));
+      buildAIOptions();
+    });
+  });
+  $('filterSearch').addEventListener('input', e => {
+    S.filterQuery = e.target.value;
+    S.filterLimit = 36;
+    renderFilterGrid();
+  });
+  $('filterMore').addEventListener('click', () => {
+    S.filterLimit += 36;
+    renderFilterGrid();
+  });
   document.querySelectorAll('#createTabs .tab').forEach(b => {
     b.addEventListener('click', () => switchTab(b.dataset.tab));
   });
@@ -1117,7 +1526,10 @@ function bindUI() {
     toast(`已保存 ${S.burst.length} 张`);
   });
 
-  $('btnViewerClose').addEventListener('click', () => { $('viewer').hidden = true; });
+  $('btnViewerClose').addEventListener('click', () => {
+    $('viewer').hidden = true;
+    try { $('viewerVid').pause(); } catch {}
+  });
   $('btnViewerSave').addEventListener('click', () => savePhoto(viewing));
 
   // 设置项
@@ -1219,6 +1631,8 @@ function modeTip(m) {
 }
 
 /* ===================== 启动 ===================== */
+tagPlatform();
+
 window.addEventListener('error', e => {
   document.body.dataset.err = ((document.body.dataset.err || '') + '|' + (e.message || 'err')).slice(-400);
 });
@@ -1232,6 +1646,13 @@ $('filterName').textContent = S.filter === 'none' ? '创作' : FILTERS[S.filter]
 
 if (!DEBUG && 'serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
+  // 新版本接管后自动刷新一次，避免用户停留在旧 JS 上
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloaded) return;
+    reloaded = true;
+    location.reload();
+  });
 }
 if (DEBUG && 'serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister())).catch(() => {});

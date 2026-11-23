@@ -3,6 +3,8 @@
  * 优先直写硬件（曝光补偿 / ISO / 快门 / 变焦 / 白平衡），不支持时由上层用软件模拟。
  */
 
+import { captureSize } from './platform.js';
+
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
 export class Camera {
@@ -28,17 +30,18 @@ export class Camera {
   async start(opts = {}) {
     const facing = opts.facing || this.facing;
     this.facing = facing;
+    const cap = captureSize();
     const base = {
       audio: false,
       video: {
         facingMode: { ideal: facing },
-        width: { ideal: 2560 },
-        height: { ideal: 1440 },
+        width: { ideal: cap.w },
+        height: { ideal: cap.h },
         frameRate: { ideal: 30, max: 60 },
       },
     };
     if (opts.deviceId) {
-      base.video = { deviceId: { exact: opts.deviceId }, width: { ideal: 2560 }, height: { ideal: 1440 } };
+      base.video = { deviceId: { exact: opts.deviceId }, width: { ideal: cap.w }, height: { ideal: cap.h } };
     }
 
     this.stop();

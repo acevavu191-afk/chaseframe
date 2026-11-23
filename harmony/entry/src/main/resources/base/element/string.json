@@ -1,0 +1,9 @@
+{
+  "string": [
+    { "name": "app_name", "value": "追帧" },
+    { "name": "module_desc", "value": "免费 AI 构图相机" },
+    { "name": "EntryAbility_desc", "value": "追帧取景与拍摄" },
+    { "name": "camera_reason", "value": "用于取景、构图分析与拍摄" },
+    { "name": "mic_reason", "value": "用于录制视频时的声音" }
+  ]
+}

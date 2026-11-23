@@ -1,0 +1,6 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "追帧入口模块",
+  "dependencies": {}
+}
