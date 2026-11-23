@@ -1,0 +1,4 @@
+.qa/
+android/build/
+android/*.keystore
+*.idsig
