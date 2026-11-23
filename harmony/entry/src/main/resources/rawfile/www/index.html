@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <meta name="theme-color" content="#0a0a0c" />
-<meta name="app-version" content="1.2.1" /> /> /> />
+<meta name="app-version" content="1.2.2" /> /> /> /> />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="mobile-web-app-capable" content="yes" />
@@ -96,13 +96,6 @@
       <button id="btnExposure" class="rail-btn rail-text" title="曝光补偿">+0.0</button>
     </div>
 
-    <!-- 变焦 -->
-    <div class="zoom-bar" id="zoomBar">
-      <button class="z" data-z="1">1×</button>
-      <button class="z" data-z="2">2×</button>
-      <button class="z" data-z="3">3×</button>
-    </div>
-
     <div id="bigHint" class="big-hint">
       <span class="bh-arrow" id="bhArrow">↑</span>
       <span class="bh-text" id="bhText">对准想拍的东西</span>
@@ -125,9 +118,16 @@
         </button>
       </div>
 
-      <div class="cap-seg" id="capSeg">
-        <button data-cap="photo" class="is-active">照片</button>
-        <button data-cap="video">视频</button>
+      <div class="hud-sub">
+        <div class="cap-seg" id="capSeg">
+          <button data-cap="photo" class="is-active">照片</button>
+          <button data-cap="video">视频</button>
+        </div>
+        <div class="zoom-bar" id="zoomBar">
+          <button class="z" data-z="1">1×</button>
+          <button class="z" data-z="2">2×</button>
+          <button class="z" data-z="3">3×</button>
+        </div>
       </div>
 
       <div class="mode-scroll" id="modeScroll">
@@ -329,10 +329,10 @@
     <div class="ob-card">
       <div class="ob-step">1</div>
       <h2>对准想拍的东西</h2>
-      <p>白圈会套在主体上，方框是它该去的位置。</p>
+      <p>白圈套住主体，方框是它该去的位置。</p>
       <div class="ob-step">2</div>
       <h2>跟着箭头移手机</h2>
-      <p>把白圈挪进方框里就行，不用懂构图。</p>
+      <p>方框钉在画面里不会动，跟着箭头平移手机，让白圈靠过去就行。</p>
       <div class="ob-step">3</div>
       <h2>变绿就按快门</h2>
       <p>框变绿 = 构图到位，直接拍。</p>

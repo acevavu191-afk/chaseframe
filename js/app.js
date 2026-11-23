@@ -184,6 +184,7 @@ function layout() {
   overlay.style.height = ch + 'px';
   octx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
+
   const video = $('video');
   const vw = S.demo ? 720 : video.videoWidth;
   const vh = S.demo ? 1280 : video.videoHeight;
@@ -354,21 +355,22 @@ function drawOverlay(ts) {
   drawCompGuide();
 
   // ---- 方框（目标）+ 圆圈（主体中心）：把手机移过去，让圆圈进框 ----
-  if (S.opts.guide && a.subject) {
-    const sc = toScreen(a.subject.cx, a.subject.cy);
+  if (S.opts.guide && (a.subject || (S.targetLock && ev.target))) {
+    const sc = a.subject ? toScreen(a.subject.cx, a.subject.cy) : null;
     const tc = toScreen(ev.target.x, ev.target.y);
     const ringR = Math.max(12, L.rect.w * 0.042);
-    const half = Math.max(24, L.rect.w * 0.095);
-    const dist0 = Math.hypot(sc.x - tc.x, sc.y - tc.y);
-    const inside = dist0 < half * 0.6;
+    const half = targetHalfPx();
+    const dist0 = sc ? Math.hypot(sc.x - tc.x, sc.y - tc.y) : 999;
+    const inside = !!sc && dist0 < half * 0.6;
     // 只有构图分真的到位才变绿，避免"看着进框了但其实不行"
-    const ok = ev.score >= 86 && inside;
+    const ok = !!sc && ev.score >= 86 && inside;
     const accent = ok ? '#58d68d' : '#ffb03a';
 
-    // 目标方框（四角括号 + 细边 + 半透明底），在任何背景上都能看清
     octx.save();
     const x0 = tc.x - half, y0 = tc.y - half, side = half * 2;
-    octx.fillStyle = ok ? 'rgba(24,64,42,.28)' : 'rgba(10,10,12,.34)';
+
+    // 半透明底 + 四角括号：在任何背景上都能看清这是个"槽位"
+    octx.fillStyle = ok ? 'rgba(24,64,42,.3)' : 'rgba(10,10,12,.36)';
     octx.fillRect(x0, y0, side, side);
     octx.shadowColor = 'rgba(0,0,0,.75)';
     octx.shadowBlur = 4;
@@ -387,8 +389,8 @@ function drawOverlay(ts) {
     octx.setLineDash([]);
     octx.globalAlpha = 1;
 
-    // 方框标签
-    const tlabel = ok ? '到位 ✓' : '把圈移进框';
+    // 标签贴在方框上方，太靠上就放到框内下方
+    const tlabel = ok ? '到位 ✓' : (sc ? '把圈移进框' : '把主体移进框');
     octx.font = '600 10px -apple-system, system-ui, sans-serif';
     const tlw = octx.measureText(tlabel).width;
     octx.fillStyle = ok ? 'rgba(88,214,141,.95)' : 'rgba(255,176,58,.95)';
@@ -396,15 +398,6 @@ function drawOverlay(ts) {
     octx.fillRect(x0, ly, tlw + 10, 15);
     octx.fillStyle = '#241300';
     octx.fillText(tlabel, x0 + 5, ly + 11);
-
-    // 主体中心圆圈
-    octx.shadowColor = 'rgba(0,0,0,.75)';
-    octx.shadowBlur = 4;
-    octx.strokeStyle = ok ? '#58d68d' : 'rgba(255,255,255,.95)';
-    octx.lineWidth = 2.2;
-    octx.beginPath(); octx.arc(sc.x, sc.y, ringR, 0, 7); octx.stroke();
-    octx.fillStyle = ok ? '#58d68d' : 'rgba(255,255,255,.95)';
-    octx.beginPath(); octx.arc(sc.x, sc.y, 2.6, 0, 7); octx.fill();
 
     // 方框中心准星
     octx.strokeStyle = accent;
@@ -423,9 +416,19 @@ function drawOverlay(ts) {
       octx.setLineDash([]);
     }
 
+    // 主体中心圆圈（只有认出主体时才画）
+    if (sc) {
+      octx.shadowColor = 'rgba(0,0,0,.75)';
+      octx.shadowBlur = 4;
+      octx.strokeStyle = ok ? '#58d68d' : 'rgba(255,255,255,.95)';
+      octx.lineWidth = 2.2;
+      octx.beginPath(); octx.arc(sc.x, sc.y, ringR, 0, 7); octx.stroke();
+      octx.fillStyle = ok ? '#58d68d' : 'rgba(255,255,255,.95)';
+      octx.beginPath(); octx.arc(sc.x, sc.y, 2.6, 0, 7); octx.fill();
+    }
+
     // 方向箭头：从圆圈指向方框
-    const dist = Math.hypot(tc.x - sc.x, tc.y - sc.y);
-    if (!ok && dist > ringR + half * 0.6) {
+    if (sc && !ok && dist0 > ringR + half * 0.6) {
       const ang = Math.atan2(tc.y - sc.y, tc.x - sc.x);
       const sx = sc.x + Math.cos(ang) * (ringR + 4);
       const sy = sc.y + Math.sin(ang) * (ringR + 4);
@@ -453,11 +456,13 @@ function drawOverlay(ts) {
     const m = a.motion;
     const m0 = toScreen(m.x, m.y), m1 = toScreen(m.x + m.w, m.y + m.h);
     octx.save();
+    octx.globalAlpha = 0.4;
     octx.strokeStyle = 'rgba(90,220,255,.85)';
-    octx.lineWidth = 1.4;
-    octx.setLineDash([4, 4]);
+    octx.lineWidth = 1;
+    octx.setLineDash([3, 5]);
     octx.strokeRect(m0.x, m0.y, m1.x - m0.x, m1.y - m0.y);
     octx.setLineDash([]);
+    octx.globalAlpha = 1;
 
     // 速度矢量
     const c = toScreen(m.cx, m.cy);
@@ -469,12 +474,12 @@ function drawOverlay(ts) {
     octx.stroke();
 
     // 预测框
-    for (const hz of [0.2, 0.42]) {
+    for (const hz of [0.2]) {
       const p = predictSubject(m, hz);
       if (!p) continue;
       const q0 = toScreen(p.x0, p.y0);
       const q1 = toScreen(p.x0 + p.w, p.y0 + p.h);
-      octx.globalAlpha = hz < 0.3 ? 0.5 : 0.26;
+      octx.globalAlpha = 0.5;
       octx.strokeStyle = '#5adcff';
       octx.lineWidth = 1.2;
       octx.strokeRect(q0.x, q0.y, q1.x - q0.x, q1.y - q0.y);

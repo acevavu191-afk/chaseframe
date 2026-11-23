@@ -164,13 +164,16 @@ export function evaluate(a, o = {}) {
   let target = { x: 0.5, y: 0.5, tpl: { id: 'center', name: '中心构图' }, d: 0.5 };
   let hasSubject = !!subject;
 
+  // 目标点一旦定下就固定在图幅坐标里，且在没有识别到主体时也保留，
+  // 这样用户把手机甩开了还能看见"该把主体放哪"。
+  const ft = o.forceTarget;
+  if (ft && Number.isFinite(ft.x) && Number.isFinite(ft.y)) {
+    target = { x: ft.x, y: ft.y, tpl: ft.tpl || { id: 'auto', name: '构图' }, d: 0, locked: true };
+  }
+
   if (subject) {
-    const ft = o.forceTarget;
-    // 目标点一旦定下就固定在图幅坐标里。若每帧按主体位置重新挑最近交点，
-    // 用户一平移手机方框就会跟着主体跑，永远追不上。
-    if (ft && Number.isFinite(ft.x) && Number.isFinite(ft.y)) {
-      target = { x: ft.x, y: ft.y, tpl: ft.tpl || { id: 'auto', name: '构图' }, d: 0, locked: true };
-    } else {
+    // 若每帧按主体位置重新挑最近交点，用户一平移手机方框就会跟着主体跑，永远追不上
+    if (!target.locked) {
       target = pickTarget(subject, mode, a.motion, o.comp || 'auto', o.lookDir || 'right');
     }
     // 与界面上的"圆圈进框"保持一致：只看主体中心到目标点的距离
