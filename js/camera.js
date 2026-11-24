@@ -30,6 +30,8 @@ export class Camera {
   async start(opts = {}) {
     const facing = opts.facing || this.facing;
     this.facing = facing;
+    this.busy = true;
+    this.busyAt = performance.now();
     this.stop();
 
     // 从高到低试：先 exact（要么给这个尺寸，要么直接报错），再 ideal 兜底
@@ -52,7 +54,7 @@ export class Camera {
       }
       if (stream) break;
     }
-    if (!stream) throw lastErr || new Error('无法访问相机');
+    if (!stream) { this.busy = false; throw lastErr || new Error('无法访问相机'); }
     this.stream = stream;
     this.track = stream.getVideoTracks()[0];
     this.video.srcObject = stream;
@@ -66,6 +68,7 @@ export class Camera {
     });
 
     this.readCapabilities();
+    this.busy = false;
     return this.track;
   }
 

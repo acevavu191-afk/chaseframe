@@ -873,3 +873,12 @@ input[type="checkbox"]:checked + .sw::after { transform: translateX(16px); }
   font-variant-numeric: tabular-nums;
 }
 .viewfinder:not(.simple) #zoomChip { display: none; }
+
+/* 主体锁定胶囊：让"圈为什么不动"有明确解释 */
+.exif-badge.lock {
+  margin-left: 4px;
+  color: #d7f0ff;
+  background: rgba(90, 200, 255, .16);
+  border: 1px solid rgba(90, 200, 255, .42);
+  font-variant-numeric: tabular-nums;
+}

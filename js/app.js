@@ -257,6 +257,18 @@ function loop(ts) {
   }
   drawOverlay(ts);
 
+  if (S.locked && ts - (S.lockedAt || 0) > 10000) {
+    S.locked = null;
+    S.lockedAt = 0;
+    analyzer.reset();
+    resetTarget();
+    toast('锁定已自动解除');
+  }
+  if (ts - lastWatch > 1100) {
+    lastWatch = ts;
+    watchdog(ts);
+  }
+
   if (ts - lastHud > 190) {
     lastHud = ts;
     updateHud();
@@ -283,6 +295,7 @@ function runAnalysis(ts) {
     // 刚解锁，清掉残留
   }
   S.a = a;
+  S.frameAt = ts;
   if (DEBUG) window.__dbg = { miss: analyzer.missCount, sb: analyzer.smoothBox ? +analyzer.smoothBox.cx.toFixed(3) : null, subj: a.subject ? +a.subject.cx.toFixed(3) : null, same: analyzer === __CF.analyzer };
 
   // ---- 构图目标锁定 ----
@@ -389,7 +402,13 @@ function toScreen(nx, ny) {
 }
 
 function drawOverlay(ts) {
-  if (!L) return;
+  if (!L) {
+    octx.save();
+    octx.setTransform(1, 0, 0, 1, 0, 0);
+    octx.clearRect(0, 0, overlay.width, overlay.height);
+    octx.restore();
+    return;
+  }
   octx.clearRect(0, 0, L.cw, L.ch);
   const a = S.a, ev = S.ev;
   if (!a || !ev) return;
@@ -676,6 +695,13 @@ function updateHud() {
   const badge = $('exifMode');
   badge.textContent = S.hwEv ? `${MODES[S.mode].name} · 硬件` : `${MODES[S.mode].name} · 软件`;
   badge.classList.toggle('hw', S.hwEv);
+
+  const lockChip = $('lockChip');
+  if (lockChip) {
+    const left = S.locked ? Math.max(0, Math.ceil((10000 - (performance.now() - (S.lockedAt || 0))) / 1000)) : 0;
+    lockChip.hidden = !S.locked;
+    if (S.locked) lockChip.textContent = `🔒 ${left}s · 解锁`;
+  }
 
   const zoomChip = $('zoomChip');
   if (zoomChip) {
@@ -1164,6 +1190,69 @@ async function startCamera() {
   }
 }
 
+/* ===================== 卡死自愈 ===================== */
+let recovering = false;
+
+async function recoverCamera(msg) {
+  if (recovering || S.demo) return;
+  recovering = true;
+  try {
+    if (msg) toast(msg, 3600);
+    $('video').play().catch(() => {});
+    try {
+      await camera.start({ facing: camera.facing });
+    } catch (e1) {
+      // 常见于 4K 协商失败或相机被占用：退回自动分辨率再试
+      setResolutionPref('auto');
+      await new Promise(r => setTimeout(r, 450));
+      await camera.start({ facing: camera.facing });
+      const sel = $('optRes');
+      if (sel) sel.value = 'auto';
+    }
+    $('video').classList.toggle('mirror', camera.facing === 'user');
+    analyzer.reset();
+    resetTarget();
+    S.hwEv = false;
+    S.zoom = 1;
+    S.zoomManualUntil = 0;
+    setDigitalScale(1);
+    L = layout();
+    renderCaps();
+    await $('video').play().catch(() => {});
+    toast(`取景已恢复 ${camera.size.w}×${camera.size.h}`, 2600);
+  } catch (e) {
+    toast('相机恢复失败，请下拉刷新页面', 6000);
+  } finally {
+    recovering = false;
+    lastVideoTime = -1;
+  }
+}
+
+let lastWatch = 0, lastVideoTime = -1, stallAt = 0;
+
+function watchdog(ts) {
+  if (S.demo || recovering) return;
+  if (camera.busy && performance.now() - (camera.busyAt || 0) < 6000) return;   // 正在重开流，别插一脚
+  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+  const v = $('video');
+  if (!v) return;
+  const dead = !v.videoWidth || v.readyState < 2;
+  const t = v.currentTime || 0;
+  const frozen = !v.paused && lastVideoTime >= 0 && Math.abs(t - lastVideoTime) < 1e-4;
+  lastVideoTime = t;
+  if (dead || frozen) {
+    recoverCamera(frozen ? '画面停住了，正在重启相机…' : '取景未就绪，正在重启相机…');
+    return;
+  }
+  // 画面在动、但识别结果长时间不更新 → 重置分析器
+  if (!S.a || ts - (S.frameAt || 0) > 2200) {
+    if (!stallAt) stallAt = ts;
+    else if (ts - stallAt > 1600) { stallAt = ts; analyzer.reset(); }
+  } else {
+    stallAt = 0;
+  }
+}
+
 /** 切换分辨率：重开一次流（摄像头只能重新协商） */
 async function applyResolution() {
   if (S.demo) { toast('演示模式下不改分辨率'); return; }
@@ -1188,7 +1277,7 @@ async function applyResolution() {
       toast(`${sz.w}×${sz.h}`);
     }
   } catch (e) {
-    toast('切换分辨率失败，保持原设置');
+    await recoverCamera('切换失败，正在恢复取景…');
   }
 }
 
@@ -1227,6 +1316,13 @@ function updateBigHint() {
   const box = $('bigHint');
   const arrowEl = $('bhArrow');
   const textEl = $('bhText');
+  if (S.locked) {
+    box.classList.remove('good');
+    arrowEl.textContent = '🔒';
+    const left = Math.max(0, Math.ceil((10000 - (performance.now() - (S.lockedAt || 0))) / 1000));
+    textEl.textContent = `主体已锁定 ${left}s · 点顶部解锁`;
+    return;
+  }
   if (!ev.hasSubject) {
     box.classList.remove('good');
     arrowEl.textContent = '◎';
@@ -2043,6 +2139,14 @@ function bindUI() {
   $('btnCreateClose').addEventListener('click', () => { $('createSheet').hidden = true; });
   $('btnAI').addEventListener('click', openAICompose);
   $('btnAIClose').addEventListener('click', () => { $('aiSheet').hidden = true; });
+  $('lockChip').addEventListener('click', () => {
+    S.locked = null;
+    S.lockedAt = 0;
+    analyzer.reset();
+    resetTarget();
+    toast('已解锁，回到自动识别');
+  });
+
   $('zoomChip').addEventListener('click', () => {
     S.zoomManualUntil = performance.now() + 15000;
     setZoom(1);
@@ -2154,18 +2258,28 @@ function bindUI() {
   });
 
   // 点击取景框对焦 + 长按锁定主体
-  let pressTimer = null;
+  let pressTimer = null, pressAt = null;
   $('video').addEventListener('pointerdown', e => {
     const rect = stage.getBoundingClientRect();
     const nx = (e.clientX - rect.left) / rect.width;
     const ny = (e.clientY - rect.top) / rect.height;
+    pressAt = { x: e.clientX, y: e.clientY };
     pressTimer = setTimeout(() => {
       lockSubject(nx, ny);
       pressTimer = null;
-    }, 480);
+    }, 560);
+  });
+  // 手指一挪就取消长按：移动手机时手指常搭在屏幕上，别再误锁
+  $('video').addEventListener('pointermove', e => {
+    if (!pressTimer || !pressAt) return;
+    if (Math.hypot(e.clientX - pressAt.x, e.clientY - pressAt.y) > 10) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
   });
   $('video').addEventListener('pointerup', async e => {
     if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+    pressAt = null;
     const rect = stage.getBoundingClientRect();
     // 点在目标方框里 → 换一个构图目标（方框本身可以点）
     if (S.ev && S.ev.target && S.opts.guide) {
@@ -2213,6 +2327,7 @@ function lockSubject(nx, ny) {
   };
   analyzer.smoothBox = S.locked;
   analyzer.missCount = 0;
+  S.lockedAt = performance.now();
   resetTarget();
   toast('已锁定这个主体 · 再长按一次可取消');
 }
