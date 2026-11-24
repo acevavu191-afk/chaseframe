@@ -342,32 +342,49 @@ export class FrameAnalyzer {
     }
 
     // ---------- 7. 主体时域平滑 ----------
+    // 帧差区域是「上一帧位置 ∪ 这一帧位置」的并集，中心天然落后半帧。
+    // 这里用上一帧估出的速度把它补到当前帧位置，否则快速平移时框会比主体慢半拍。
+    const dtFrame = Math.max(0.008, (now - this.prevTime) / 1000);
+    const vfx = this.smVx || 0, vfy = this.smVy || 0;
+    const shiftX = clamp(vfx * dtFrame * 0.5, -0.09, 0.09);
+    const shiftY = clamp(vfy * dtFrame * 0.5, -0.09, 0.09);
+
+    const fromMotion = (mb) => {
+      // 并集还包含位移，宽度也一并收掉
+      const mw = clamp(mb.w - Math.min(mb.w * 0.55, Math.abs(vfx * dtFrame)), 0.03, 1);
+      const mh = clamp(mb.h - Math.min(mb.h * 0.55, Math.abs(vfy * dtFrame)), 0.03, 1);
+      const mcx = clamp(mb.cx + shiftX, 0, 1);
+      const mcy = clamp(mb.cy + shiftY, 0, 1);
+      return {
+        area: clamp(mCount / gN, 0.004, 0.9),
+        x: clamp(mcx - mw / 2, 0, 1 - mw),
+        y: clamp(mcy - mh / 2, 0, 1 - mh),
+        w: mw, h: mh,
+        cx: mcx, cy: mcy,
+        kept: mCount, count: mCount,
+      };
+    };
+
     // 画面里确实有东西在动、而且运动区紧凑时，直接以运动区为主体。
     // 拍运动物体时这才是用户真正想要的框，也比"显著簇"稳定得多。
     if (motionBox && motionBox.w < 0.55 && motionBox.h < 0.85 &&
         motionRatio > 0.015 && motionRatio < 0.35) {
-      best = {
-        area: clamp(mCount / gN, 0.004, 0.9),
-        x: motionBox.x, y: motionBox.y,
-        w: motionBox.w, h: motionBox.h,
-        cx: motionBox.cx, cy: motionBox.cy,
-        kept: mCount, count: mCount,
-      };
+      best = fromMotion(motionBox);
     } else if (best && motionBox && best.w > 0.55 && motionBox.w < 0.6 && motionBox.h < 0.9) {
-      best = {
-        area: clamp(mCount / gN, 0.004, 0.9),
-        x: motionBox.x, y: motionBox.y,
-        w: motionBox.w, h: motionBox.h,
-        cx: motionBox.cx, cy: motionBox.cy,
-        kept: mCount, count: mCount,
-      };
+      best = fromMotion(motionBox);
     }
 
-    // 跟踪锁定：新目标必须连续多帧胜出，才允许"换人"
+    // 跟踪锁定：只有"换了个东西"才需要多帧确认。
+    // 平移镜头时同一个主体会整体位移，IoU 同样会掉到很低——
+    // 这时如果还按 6 帧确认，框就会死死停在原地，看起来就是"跟不上手"。
     if (best && this.lastBest && this.lastScore > 0) {
-      const keepIou = iou(best, this.lastBest);
-      if (keepIou > 0.2) {
-        this.challenger = null;               // 还是同一个目标
+      const prev = this.lastBest;
+      const keepIou = iou(best, prev);
+      const sizeSame = Math.abs(best.w - prev.w) < prev.w * 0.55 + 0.035 &&
+                       Math.abs(best.h - prev.h) < prev.h * 0.55 + 0.035;
+      const near = Math.hypot(best.cx - prev.cx, (best.cy - prev.cy) * 1.1) < 0.42;
+      if (keepIou > 0.15 || (sizeSame && near)) {
+        this.challenger = null;               // 还是同一个目标（只是平移了）
       } else {
         if (this.challenger && iou(best, this.challenger.box) > 0.25) {
           this.challenger.count++;
@@ -375,8 +392,8 @@ export class FrameAnalyzer {
         } else {
           this.challenger = { box: best, count: 1 };
         }
-        // 连续 6 帧、且明显更强，才切过去
-        if (this.challenger.count < 6 && bestScore < this.lastScore * 2.2) {
+        // 连续 4 帧、或分数明显更高，才切过去
+        if (this.challenger.count < 4 && bestScore < this.lastScore * 1.7) {
           best = this.lastBest;
         } else {
           this.challenger = null;
@@ -399,28 +416,33 @@ export class FrameAnalyzer {
     if (subject) {
       const p0 = this.smoothBox;
       if (p0) {
-        // 死区：变化很小就完全沿用上一帧
-        if (Math.abs(subject.cx - p0.cx) < 0.012 && Math.abs(subject.cy - p0.cy) < 0.012 &&
-            Math.abs(subject.area - p0.area) < 0.008) {
+        const dx = subject.cx - p0.cx, dy = subject.cy - p0.cy;
+        const dist = Math.hypot(dx, dy * 1.1);
+        // 增益随位移变化：手抖（<1%）几乎不动，平移手机（>5%）几乎实时
+        // 快速平移时直接跟到位（增益 1.0），只在慢速/静止时才做平滑；
+        // 抖动由下面的死区负责，不再靠"跟得慢"来压抖动。
+        const gain = dist > 0.03 ? 1 : dist > 0.012 ? 0.72 : dist > 0.005 ? 0.4 : 0;
+        if (gain === 0) {
+          // 死区：完全沿用上一帧，避免"呼吸式"抖动
           subject = p0;
           this.lastBox = p0;
           this.lastBest = p0;
           this.lastScore = Math.max(this.lastScore, bestScore);
         } else {
-          const a = 0.4;
-          const sw2 = clamp(p0.w + (subject.w - p0.w) * 0.25, 0.02, 1);
-          const sh2 = clamp(p0.h + (subject.h - p0.h) * 0.25, 0.02, 1);
-          // 单帧最多挪 5% 画面，挡住突跳
-          const step = 0.05;
-          const ncx = p0.cx + clamp(subject.cx - p0.cx, -step, step);
-          const ncy = p0.cy + clamp(subject.cy - p0.cy, -step, step);
+          // 上限只用来挡场景突跳（换镜头、走过遮挡物），不再限制正常跟手
+          const cap = 0.34;
+          const ncx = clamp(p0.cx + clamp(dx, -cap, cap) * gain, 0, 1);
+          const ncy = clamp(p0.cy + clamp(dy, -cap, cap) * gain, 0, 1);
+          const sizeGain = dist > 0.05 ? 0.6 : 0.24;
+          const sw2 = clamp(p0.w + (subject.w - p0.w) * sizeGain, 0.02, 1);
+          const sh2 = clamp(p0.h + (subject.h - p0.h) * sizeGain, 0.02, 1);
           subject = {
             x: clamp(ncx - sw2 / 2, 0, 1 - sw2),
             y: clamp(ncy - sh2 / 2, 0, 1 - sh2),
             w: sw2, h: sh2,
-            cx: clamp(ncx, 0, 1),
-            cy: clamp(ncy, 0, 1),
-            area: p0.area + (subject.area - p0.area) * a,
+            cx: ncx,
+            cy: ncy,
+            area: p0.area + (subject.area - p0.area) * gain,
             keptCells: subject.keptCells,
             clusterCells: subject.clusterCells,
           };

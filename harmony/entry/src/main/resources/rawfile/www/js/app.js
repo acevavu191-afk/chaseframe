@@ -227,6 +227,7 @@ let L = null;
 
 /* ===================== 主循环 ===================== */
 let lastAnalysis = 0, lastHud = 0, lastApply = 0, lastTs = 0;
+let anaCost = 8, anaInterval = 42;   // 自适应分析节流：跟着单帧开销走
 
 function loop(ts) {
   if (!S.running) return;
@@ -235,9 +236,14 @@ function loop(ts) {
 
   if (S.demo) { demo.step(dt); demo.draw(720, 1280); }
 
-  if (ts - lastAnalysis > 62) {
+  if (ts - lastAnalysis > anaInterval) {
     lastAnalysis = ts;
+    const tAna = performance.now();
     runAnalysis(ts);
+    // 目标约 25–30fps：单帧越贵越保守，低端机自动降频，高端机跑满
+    anaCost = anaCost * 0.75 + (performance.now() - tAna) * 0.25;
+    anaInterval = Math.max(24, Math.min(56, anaCost * 1.6));
+    if (DEBUG) window.__ana = { cost: +anaCost.toFixed(1), interval: +anaInterval.toFixed(0) };
   }
   drawOverlay(ts);
 
@@ -2022,7 +2028,7 @@ if (DEBUG && 'serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister())).catch(() => {});
 }
 
-if (DEBUG) window.__CF = { S, capture, burst, camera, analyzer };
+if (DEBUG) window.__CF = { S, capture, burst, camera, analyzer, FrameAnalyzer, guideTarget };
 
 // 便于预览与测试：?demo=1 直接进入演示画面
 if (new URLSearchParams(location.search).get('demo') === '1') {
