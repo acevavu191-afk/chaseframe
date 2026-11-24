@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <meta name="theme-color" content="#0a0a0c" />
-<meta name="app-version" content="1.2.3" /> /> /> /> /> />
+<meta name="app-version" content="1.3.0" /> /> /> /> /> /> />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="mobile-web-app-capable" content="yes" />
@@ -74,6 +74,7 @@
         <span class="exif-item" id="exifEv">EV 0.0</span>
         <span class="exif-item" id="exifWb">AWB</span>
         <span class="exif-badge" id="exifMode">自动</span>
+        <span class="exif-badge alt" id="exifShot">景别 —</span>
       </div>
       <button id="btnMode" class="chip chip-text" title="切换简易/专业">简易</button>
       <button id="btnSettings" class="chip chip-icon" title="设置">
@@ -192,6 +193,7 @@
         <div class="style-grid" id="styleGrid"></div>
       </div>
       <div class="tab-pane" id="paneFilter" hidden>
+        <div class="rec-bar" id="recBar" hidden></div>
         <div class="filter-top">
           <input id="filterSearch" class="search" placeholder="搜索：portra / 黑白 / 夜景 / 电影" />
           <span class="fcount" id="filterCount"></span>

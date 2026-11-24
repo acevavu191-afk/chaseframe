@@ -111,7 +111,7 @@ export class FrameAnalyzer {
     hist.fill(0);
 
     // ---------- 1. 灰度 / 饱和度 / 直方图 ----------
-    let sumR = 0, sumG = 0, sumB = 0, sumL = 0;
+    let sumR = 0, sumG = 0, sumB = 0, sumL = 0, sumSat = 0;
     for (let i = 0, p = 0; i < n; i++, p += 4) {
       const rr = data[p], gg = data[p + 1], bb = data[p + 2];
       sumR += rr; sumG += gg; sumB += bb;
@@ -121,6 +121,7 @@ export class FrameAnalyzer {
       const mx = rr > gg ? (rr > bb ? rr : bb) : (gg > bb ? gg : bb);
       const mn = rr < gg ? (rr < bb ? rr : bb) : (gg < bb ? gg : bb);
       sat[i] = mx > 4 ? (mx - mn) / mx : 0;
+      sumSat += sat[i];
       hist[(y * 63 / 255) | 0]++;
     }
     const meanLum = sumL / n;
@@ -520,6 +521,7 @@ export class FrameAnalyzer {
       gw, gh, cellEdge, cellLum,
       subject,
       subjectConfidence: subject ? clamp(bestScore, 0, 1) : 0,
+      meanSat: sumSat / n,
       clutter, colorTemp, tint,
       motion, motionRatio,
     };

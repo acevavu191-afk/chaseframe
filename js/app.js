@@ -4,6 +4,7 @@
 import { FrameAnalyzer, measureSharp } from './vision.js';
 import { PLATFORM, tagPlatform, vibrate as pVibrate, shouldPromptInstall, saveHint, pickVideoMime } from './platform.js';
 import { evaluate, guideTarget, MODES, COMPOSITIONS, exposureAdvice, shutterAdvice, predictSubject } from './compose.js';
+import { decideShot, shotAdvice, shotPercent, recommendFilters, SHOTS } from './smart.js';
 import { Camera, describeCaps } from './camera.js';
 import { FILTERS, FILTER_FAMILIES, FILTER_COUNT, FEATURED, STYLES, filterCss, buildFilter, finishCanvas, canvasToBlob, downloadBlob, shareBlob, saveToDevice, hasNative, stamp } from './filters.js';
 
@@ -53,6 +54,10 @@ const S = {
   targetMiss: 0,
   lockHintShown: false,
   targetAvoid: null,
+  shot: null,
+  recs: [],
+  recAt: 0,
+  recKey: '',
 };
 
 const camera = new Camera($('video'));
@@ -307,6 +312,32 @@ function runAnalysis(ts) {
     forceTarget: S.targetLock,
   });
   S.ev = ev;
+
+  // ---- 景别自动判定：近/中/远由场景决定，不需要用户手动选 ----
+  S.shot = decideShot(a, { mode: S.mode, prev: S.shot });
+  if (S.shot && S.shot.action !== 'hold' && ev.hasSubject) {
+    // 距离没到位时，别让分数谎报"可以按快门"
+    const cap = S.shot.gap > 0.12 ? 66 : 74;
+    if (ev.score > cap) ev.score = cap;
+    ev.ready = false;
+    ev.title = shotAdvice(S.shot);
+    ev.detail = `主体占 ${Math.round(S.shot.box * 100)}%，建议 ${shotPercent(S.shot)}`;
+    ev.detailCls = '';
+  }
+
+  // ---- 智能滤镜推荐（画面变了才重算，1 秒一次足够） ----
+  if (ts - S.recAt > 900) {
+    S.recAt = ts;
+    const recs = recommendFilters(a, { mode: S.mode, shot: S.shot });
+    const topKey = recs[0] ? recs[0].key : '';
+    S.recs = recs;
+    if (topKey !== S.recKey) {
+      S.recKey = topKey;
+      renderFilterStrip();
+      if (!$('createSheet').hidden) renderRecBar();
+    }
+  }
+
   if (DEBUG) {
     document.title = `s=${ev.score} sharp=${a.sharp.toFixed(2)} lap=${Math.round(a.lapVar)} `
       + `pos=${ev.metrics.pos.toFixed(2)} area=${a.subject ? a.subject.area.toFixed(3) : '0'} `
@@ -638,6 +669,16 @@ function updateHud() {
   const badge = $('exifMode');
   badge.textContent = S.hwEv ? `${MODES[S.mode].name} · 硬件` : `${MODES[S.mode].name} · 软件`;
   badge.classList.toggle('hw', S.hwEv);
+
+  const shotEl = $('exifShot');
+  if (shotEl) {
+    const shot = S.shot;
+    shotEl.textContent = shot
+      ? `${shot.name}·${shot.action === 'closer' ? '再近' : shot.action === 'back' ? '退后' : '自动'}`
+      : '景别 —';
+    shotEl.classList.toggle('closer', !!shot && shot.action === 'closer');
+    shotEl.classList.toggle('back', !!shot && shot.action === 'back');
+  }
 
   // 水平仪
   const hl = $('horizonLine');
@@ -1006,6 +1047,7 @@ function openCreate(tab = 'style') {
   renderFilterGroups();
   renderFilterGrid();
   renderCompList();
+  renderRecBar();
 }
 
 function switchTab(tab) {
@@ -1026,6 +1068,8 @@ function selectFilter(key) {
   $('filterName').textContent = key === 'none' ? '创作' : FILTERS[key].name;
   renderFilterGrid();
   renderStyleGrid();
+  renderFilterStrip();
+  if (!$('createSheet').hidden) renderRecBar();
   toast(`滤镜 · ${FILTERS[key].name}`);
 }
 
@@ -1154,6 +1198,9 @@ function updateBigHint() {
     arrowEl.textContent = ARROW[ev.moveDir] || '→';
     const big = ev.score < 55;
     textEl.textContent = big ? `往${ev.moveDir}多移一点` : `往${ev.moveDir}移一点`;
+  } else if (S.shot && S.shot.action !== 'hold') {
+    arrowEl.textContent = S.shot.action === 'closer' ? '＋' : '－';
+    textEl.textContent = shotAdvice(S.shot);
   } else {
     arrowEl.textContent = '·';
     textEl.textContent = ev.detail;
@@ -1168,6 +1215,24 @@ function renderFilterStrip() {
   if (!stripThumb) stripThumb = snapshotThumb();
   const picks = FEATURED.slice(0, 12);
   box.innerHTML = '';
+
+  // 智能推荐排在最前面
+  const rec = S.recs[0];
+  if (rec && FILTERS[rec.key] && rec.key !== 'none') {
+    const rf = FILTERS[rec.key];
+    const el = document.createElement('button');
+    el.className = 'fs-item rec' + (S.filter === rec.key ? ' is-active' : '');
+    el.title = rec.why;
+    const shortName = rec.name.replace(/ · .*/, '').split(' ')[0].slice(0, 9);
+    el.innerHTML = `
+      ${stripThumb ? `<img src="${stripThumb}" style="filter:${rf.css}" alt="">` : ''}
+      <i style="${rf.tint ? `background:${rf.tint};mix-blend-mode:${rf.blend || 'soft-light'}` : ''}"></i>
+      <b class="rec-flag">✦</b>
+      <span>${shortName}</span>`;
+    el.addEventListener('click', () => applyRec(rec));
+    box.appendChild(el);
+  }
+
   picks.forEach(key => {
     const f = FILTERS[key];
     if (!f) return;
@@ -1186,6 +1251,44 @@ function renderFilterStrip() {
     });
     box.appendChild(el);
   });
+}
+
+function applyRec(rec) {
+  if (!rec || !FILTERS[rec.key]) return;
+  S.filter = rec.key;
+  S.styleKey = null;
+  $('filterName').textContent = FILTERS[rec.key].name;
+  renderFilterStrip();
+  if (!$('createSheet').hidden) { renderFilterGrid(); renderRecBar(); }
+  toast(`推荐 · ${rec.why || FILTERS[rec.key].name}`);
+}
+
+/** 创作面板里的三条推荐 */
+function renderRecBar() {
+  const box = $('recBar');
+  if (!box) return;
+  if (!S.recs.length) { box.hidden = true; return; }
+  box.hidden = false;
+  box.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'rec-head';
+  head.innerHTML = `<b>按当前画面推荐</b><span>${S.shot ? S.shot.name + ' · ' + shotPercent(S.shot) : ''}</span>`;
+  box.appendChild(head);
+  const list = document.createElement('div');
+  list.className = 'rec-list';
+  S.recs.forEach((r, i) => {
+    const f = FILTERS[r.key];
+    if (!f) return;
+    const el = document.createElement('button');
+    el.className = 'rec-chip' + (S.filter === r.key ? ' is-active' : '');
+    el.innerHTML = `
+      <b>${i === 0 ? '最合适' : '也可以'}</b>
+      <span>${f.name}</span>
+      <i>${r.why}</i>`;
+    el.addEventListener('click', () => applyRec(r));
+    list.appendChild(el);
+  });
+  box.appendChild(list);
 }
 
 function maybeInstallHint() {
@@ -1251,6 +1354,12 @@ function analyzeStill(canvas) {
     if (!a) { setAIState('idle', '这张图读不出来'); $('aiMove').textContent = '换一张试试。'; return; }
     AI.a = a;
     AI.subj = a.subject;
+    // 景别自动判定：远景用松裁切、特写用紧裁切
+    const shot = decideShot(a, { mode: S.mode });
+    AI.zoom = shot.id === 'wide' ? 'loose' : shot.id === 'close' ? 'tight' : 'mid';
+    document.querySelectorAll('#aiZoomSeg button').forEach(b => {
+      b.classList.toggle('is-active', b.dataset.z === AI.zoom);
+    });
     renderAIResult(a);
     buildAIOptions();
     setAIState('done', '分析完成 · 可继续调整');
