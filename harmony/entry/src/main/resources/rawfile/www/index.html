@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <meta name="theme-color" content="#0a0a0c" />
-<meta name="app-version" content="1.3.1" /> /> /> /> /> /> /> />
+<meta name="app-version" content="1.3.2" /> /> /> /> /> /> /> /> />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="mobile-web-app-capable" content="yes" />
@@ -290,8 +290,16 @@
 
       <div class="group">
         <div class="group-title">出片</div>
+        <label class="row"><span>拍摄分辨率</span>
+          <select id="optRes">
+            <option value="auto">自动</option>
+            <option value="4k">4K · 3840×2160</option>
+            <option value="1080">1080p</option>
+            <option value="720">720p</option>
+          </select>
+        </label>
         <label class="row"><span>画幅比例</span>
-          <select id="optRatio"><option value="4:3">4:3</option><option value="16:9">16:9</option><option value="1:1">1:1</option><option value="9:16">9:16</option></select>
+          <select id="optRatio"><option value="4:3">4:3</option><option value="16:9">16:9</option><option value="1:1">1:1</option><option value="5:4">5:4</option><option value="9:16">9:16</option></select>
         </label>
         <label class="row"><span>参数水印</span><input type="checkbox" id="optWatermark" /><i class="sw"></i></label>
         <label class="row"><span>保存后震动反馈</span><input type="checkbox" id="optHaptic" checked /><i class="sw"></i></label>

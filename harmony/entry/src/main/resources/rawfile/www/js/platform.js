@@ -41,10 +41,34 @@ export function vibrate(ms = 18) {
  * 拍摄分辨率：iOS 的 getUserMedia 上限普遍是 1920×1080，
  * 请求更高只会被静默降级并可能拉低帧率；鸿蒙/安卓可以要更高。
  */
+const RES_KEY = 'cf.res';
+
+export function resolutionPref() {
+  try { return localStorage.getItem(RES_KEY) || 'auto'; } catch { return 'auto'; }
+}
+
+export function setResolutionPref(v) {
+  try { localStorage.setItem(RES_KEY, v); } catch { /* 隐私模式 */ }
+}
+
+/**
+ * 分辨率候选：按偏好给出「从高到低」的尝试顺序。
+ * 摄像头只保证给出"最接近"的尺寸，所以上层会逐个用 exact 试。
+ */
+export function captureSizes() {
+  const p = resolutionPref();
+  const K4 = { w: 3840, h: 2160 };
+  if (p === '4k') return [K4, { w: 2560, h: 1440 }, { w: 1920, h: 1080 }, { w: 1280, h: 720 }];
+  if (p === '1080') return [{ w: 1920, h: 1080 }, { w: 1280, h: 720 }];
+  if (p === '720') return [{ w: 1280, h: 720 }];
+  // 自动：够用又不至于拖慢取景
+  if (PLATFORM.ios || PLATFORM.harmony) return [{ w: 1920, h: 1080 }, { w: 1280, h: 720 }];
+  return [{ w: 2560, h: 1440 }, { w: 1920, h: 1080 }, { w: 1280, h: 720 }];
+}
+
 export function captureSize() {
-  if (PLATFORM.ios) return { w: 1920, h: 1440 };
-  if (PLATFORM.harmony) return { w: 1920, h: 1440 };
-  return { w: 2560, h: 1440 };
+  const c = captureSizes()[0];
+  return { w: c.w, h: c.h };
 }
 
 /** 录制编码：Safari 只认 mp4/avc1，Chrome 系优先 webm */

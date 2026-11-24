@@ -3,7 +3,7 @@
  * 优先直写硬件（曝光补偿 / ISO / 快门 / 变焦 / 白平衡），不支持时由上层用软件模拟。
  */
 
-import { captureSize } from './platform.js';
+import { captureSizes } from './platform.js';
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
@@ -30,22 +30,29 @@ export class Camera {
   async start(opts = {}) {
     const facing = opts.facing || this.facing;
     this.facing = facing;
-    const cap = captureSize();
-    const base = {
-      audio: false,
-      video: {
-        facingMode: { ideal: facing },
-        width: { ideal: cap.w },
-        height: { ideal: cap.h },
-        frameRate: { ideal: 30, max: 60 },
-      },
-    };
-    if (opts.deviceId) {
-      base.video = { deviceId: { exact: opts.deviceId }, width: { ideal: cap.w }, height: { ideal: cap.h } };
-    }
-
     this.stop();
-    const stream = await navigator.mediaDevices.getUserMedia(base);
+
+    // 从高到低试：先 exact（要么给这个尺寸，要么直接报错），再 ideal 兜底
+    let stream = null, lastErr = null;
+    for (const c of captureSizes()) {
+      for (const mode of ['exact', 'ideal']) {
+        const video = {
+          facingMode: { ideal: facing },
+          width: { [mode]: c.w },
+          height: { [mode]: c.h },
+          frameRate: { ideal: 30, max: 60 },
+        };
+        if (opts.deviceId) video.deviceId = { exact: opts.deviceId };
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: false, video });
+          break;
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+      if (stream) break;
+    }
+    if (!stream) throw lastErr || new Error('无法访问相机');
     this.stream = stream;
     this.track = stream.getVideoTracks()[0];
     this.video.srcObject = stream;

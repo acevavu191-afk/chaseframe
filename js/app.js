@@ -2,7 +2,7 @@
  * app.js — 追帧 ChaseFrame 主控
  */
 import { FrameAnalyzer, measureSharp } from './vision.js';
-import { PLATFORM, tagPlatform, vibrate as pVibrate, shouldPromptInstall, saveHint, pickVideoMime } from './platform.js';
+import { PLATFORM, tagPlatform, vibrate as pVibrate, shouldPromptInstall, saveHint, pickVideoMime, resolutionPref, setResolutionPref } from './platform.js';
 import { evaluate, guideTarget, MODES, COMPOSITIONS, exposureAdvice, shutterAdvice, predictSubject } from './compose.js';
 import { decideShot, shotAdvice, shotPercent, recommendFilters, SHOTS } from './smart.js';
 import { Camera, describeCaps } from './camera.js';
@@ -1164,6 +1164,34 @@ async function startCamera() {
   }
 }
 
+/** 切换分辨率：重开一次流（摄像头只能重新协商） */
+async function applyResolution() {
+  if (S.demo) { toast('演示模式下不改分辨率'); return; }
+  const want = resolutionPref();
+  const facing = camera.facing;
+  try {
+    toast('正在切换分辨率…');
+    await camera.start({ facing });
+    $('video').classList.toggle('mirror', facing === 'user');
+    analyzer.reset();
+    resetTarget();
+    S.hwEv = false;
+    S.zoom = 1;
+    S.zoomManualUntil = 0;
+    setDigitalScale(1);
+    layout();
+    renderCaps();
+    const sz = camera.size;
+    if (want === '4k' && sz.w < 3000) {
+      toast(`这台设备给不到 4K，已用 ${sz.w}×${sz.h}`, 3600);
+    } else {
+      toast(`${sz.w}×${sz.h}`);
+    }
+  } catch (e) {
+    toast('切换分辨率失败，保持原设置');
+  }
+}
+
 async function initGyro() {
   try {
     if (typeof DeviceOrientationEvent !== 'undefined' &&
@@ -1319,7 +1347,9 @@ function maybeInstallHint() {
 function renderCaps() {
   const box = $('capsList');
   const items = describeCaps(camera.caps);
-  box.innerHTML = items.map(i => `<span class="${i.ok ? 'on' : 'off'}">${i.label}${i.ok ? ' ✓' : ' ·'}</span>`).join('');
+  const sz = camera.size;
+  const resChip = !S.demo && sz && sz.w ? `<span class="on">输出 ${sz.w}×${sz.h}</span>` : '';
+  box.innerHTML = resChip + items.map(i => `<span class="${i.ok ? 'on' : 'off'}">${i.label}${i.ok ? ' ✓' : ' ·'}</span>`).join('');
   if (camera.caps.zoom) {
     document.querySelectorAll('.zoom-bar .z').forEach(b => {
       b.disabled = Number(b.dataset.z) > camera.caps.zoom.max;
@@ -2110,6 +2140,13 @@ function bindUI() {
     S.grid = e.target.value;
     $('gridLayer').dataset.mode = S.grid;
   });
+  const resSel = $('optRes');
+  resSel.value = resolutionPref();
+  resSel.addEventListener('change', async e => {
+    setResolutionPref(e.target.value);
+    await applyResolution();
+  });
+
   $('optRatio').addEventListener('change', e => {
     S.ratio = e.target.value;
     $('btnRatio').textContent = S.ratio;
