@@ -858,3 +858,18 @@ input[type="checkbox"]:checked + .sw::after { transform: translateX(16px); }
 /* 评分文字压在画面上时也要读得清 */
 .score-title { text-shadow: 0 1px 3px rgba(0, 0, 0, .85); }
 .score-detail { text-shadow: 0 1px 2px rgba(0, 0, 0, .8); }
+
+/* 数码变焦：镜头不支持硬件 zoom 时，用缩放画面实现 */
+#video { transform: scale(var(--z, 1)); transform-origin: 50% 50%; }
+#video.mirror { transform: scale(var(--z, 1)) scaleX(-1); }
+#demoCanvasWrap { transform: scale(var(--z, 1)); transform-origin: 50% 50%; }
+
+/* 变焦数字胶囊（简易模式可见，点一下回到 1×） */
+.exif-badge.zoom {
+  margin-left: 4px;
+  color: #ffd9a8;
+  background: rgba(255, 176, 58, .18);
+  border: 1px solid rgba(255, 176, 58, .42);
+  font-variant-numeric: tabular-nums;
+}
+.viewfinder:not(.simple) #zoomChip { display: none; }

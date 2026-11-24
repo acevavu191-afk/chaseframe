@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <meta name="theme-color" content="#0a0a0c" />
-<meta name="app-version" content="1.3.0" /> /> /> /> /> /> />
+<meta name="app-version" content="1.3.1" /> /> /> /> /> /> /> />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="mobile-web-app-capable" content="yes" />
@@ -75,6 +75,7 @@
         <span class="exif-item" id="exifWb">AWB</span>
         <span class="exif-badge" id="exifMode">自动</span>
         <span class="exif-badge alt" id="exifShot">景别 —</span>
+        <button class="exif-badge zoom" id="zoomChip" hidden>1.0×</button>
       </div>
       <button id="btnMode" class="chip chip-text" title="切换简易/专业">简易</button>
       <button id="btnSettings" class="chip chip-icon" title="设置">
@@ -280,6 +281,7 @@
         <label class="row"><span>运动优先快门</span><input type="checkbox" id="optFast" checked /><i class="sw"></i></label>
         <label class="row"><span>硬件参数直写</span><input type="checkbox" id="optHw" checked /><i class="sw"></i></label>
         <label class="row"><span>构图到位自动抓拍</span><input type="checkbox" id="optAuto" /><i class="sw"></i></label>
+        <label class="row"><span>特写自动变焦</span><input type="checkbox" id="optAutoZoom" checked /><i class="sw"></i></label>
         <div class="row col">
           <span>曝光补偿 <b id="evVal">+0.0</b></span>
           <input type="range" id="optEv" min="-2" max="2" step="0.1" value="0" />

@@ -39,7 +39,7 @@ const S = {
   opts: {
     guide: true, level: true, subject: true, track: true,
     ae: true, awb: true, fast: true, hw: true,
-    watermark: false, haptic: true, auto: false,
+    watermark: false, haptic: true, auto: false, autoZoom: true,
   },
   a: null,
   ev: null,
@@ -55,6 +55,9 @@ const S = {
   lockHintShown: false,
   targetAvoid: null,
   shot: null,
+  digitalZoom: 1,
+  zoomManualUntil: 0,
+  lastAutoZoom: 0,
   recs: [],
   recAt: 0,
   recKey: '',
@@ -195,7 +198,9 @@ function layout() {
   const vh = S.demo ? 1280 : video.videoHeight;
   if (!vw || !vh) return null;
 
-  const scale = Math.max(cw / vw, ch / vh);
+  // 数码变焦：等于把画面放大，取景/裁切/抓帧都跟着同一比例走
+  const dz = S.digitalZoom || 1;
+  const scale = Math.max(cw / vw, ch / vh) * dz;
   const dw = vw * scale, dh = vh * scale;
   const ox = (cw - dw) / 2, oy = (ch - dh) / 2;
 
@@ -337,6 +342,8 @@ function runAnalysis(ts) {
       if (!$('createSheet').hidden) renderRecBar();
     }
   }
+
+  maybeAutoZoom(ts);
 
   if (DEBUG) {
     document.title = `s=${ev.score} sharp=${a.sharp.toFixed(2)} lap=${Math.round(a.lapVar)} `
@@ -669,6 +676,13 @@ function updateHud() {
   const badge = $('exifMode');
   badge.textContent = S.hwEv ? `${MODES[S.mode].name} · 硬件` : `${MODES[S.mode].name} · 软件`;
   badge.classList.toggle('hw', S.hwEv);
+
+  const zoomChip = $('zoomChip');
+  if (zoomChip) {
+    const zOn = S.zoom > 1.05;
+    zoomChip.hidden = !zOn;
+    if (zOn) zoomChip.textContent = `${S.zoom.toFixed(1)}×`;
+  }
 
   const shotEl = $('exifShot');
   if (shotEl) {
@@ -1130,6 +1144,10 @@ async function startCamera() {
     S.demo = false;
     $('video').hidden = false;
     $('demoCanvasWrap').hidden = true;
+    S.zoom = 1;
+    S.digitalZoom = 1;
+    S.zoomManualUntil = 0;
+    setDigitalScale(1);
     $('video').classList.toggle('mirror', false);
     S.hasGyro = await initGyro();
     renderCaps();
@@ -1664,6 +1682,73 @@ function loadAIImage(file) {
   img.src = url;
 }
 
+/* ===================== 变焦：硬件优先，数字兜底 ===================== */
+function hwZoomMax() {
+  const c = camera.caps || {};
+  return c.zoom && c.zoom.max > 1.02 ? Math.min(8, c.zoom.max) : 0;
+}
+
+function zoomMax() {
+  if (S.demo) return 2.5;
+  // 硬件变焦可以用到 8×；纯数码变焦上限 2.2×，再高就只是糊
+  return hwZoomMax() || 2.2;
+}
+
+function zoomMode() {
+  if (S.demo) return 'digital';
+  return hwZoomMax() ? 'hw' : 'digital';
+}
+
+function setDigitalScale(z) {
+  S.digitalZoom = z;
+  const v = String(Math.round(z * 1000) / 1000);
+  const vid = $('video'), dm = $('demoCanvasWrap');
+  if (vid) vid.style.setProperty('--z', v);
+  if (dm) dm.style.setProperty('--z', v);
+}
+
+async function setZoom(z, { auto = false } = {}) {
+  const v = clamp(z, 1, zoomMax());
+  S.zoom = Math.round(v * 100) / 100;
+  if (zoomMode() === 'hw') {
+    setDigitalScale(1);
+    try { await camera.apply({ zoom: S.zoom }, { throttle: 0 }); } catch {}
+  } else {
+    setDigitalScale(S.zoom);
+  }
+  layout();
+  updateHud();
+  if (auto) {
+    if (zoomMode() === 'digital' && !S.digitalZoomNoted) {
+      S.digitalZoomNoted = true;
+      toast(`自动变焦 ${S.zoom.toFixed(1)}×（数码变焦，画质略降）`, 3200);
+    } else {
+      toast(`自动变焦 ${S.zoom.toFixed(1)}×`);
+    }
+  }
+  return S.zoom;
+}
+
+/** 特写但主体太小 → 自动拉近（有上限、有冷却、手动操作会打断） */
+function maybeAutoZoom(ts) {
+  if (!S.opts.autoZoom) return;
+  if (S.capture !== 'photo') return;
+  if (REC && REC.rec) return;
+  if (S.zoomManualUntil && ts < S.zoomManualUntil) return;
+  const shot = S.shot;
+  if (!shot || shot.id !== 'close' || shot.action !== 'closer') return;
+  const max = zoomMax();
+  if (max <= 1.02) return;
+  const target = shot.band[0] * 1.06;
+  const need = Math.sqrt(target / Math.max(0.006, shot.box));
+  let want = Math.min(max, Math.max(1, need));
+  want = Math.min(want, S.zoom * 1.8);      // 一次最多提 1.8 倍，别突然糊一片
+  if (want < S.zoom * 1.22) return;         // 提升不明显就别动
+  if (ts - S.lastAutoZoom < 1800) return;
+  S.lastAutoZoom = ts;
+  setZoom(want, { auto: true });
+}
+
 /* ===================== 视频模式：独立录制链路 ===================== */
 const REC = { rec: null, chunks: [], canvas: null, raf: 0, t0: 0, timer: 0, audio: null, mime: '' };
 
@@ -1818,6 +1903,9 @@ function bindUI() {
       analyzer.reset();
       resetTarget();
       S.hwEv = false;
+      S.zoom = 1;
+      S.zoomManualUntil = 0;
+      await setZoom(1);
       renderCaps();
       toast(next === 'user' ? '前置镜头' : '后置镜头');
     } catch (e) { toast('切换失败'); }
@@ -1857,6 +1945,7 @@ function bindUI() {
   });
 
   bindCheck('optAuto', 'auto');
+  bindCheck('optAutoZoom', 'autoZoom');
 
   document.querySelectorAll('.mode').forEach(b => {
     b.addEventListener('click', () => {
@@ -1880,10 +1969,9 @@ function bindUI() {
 
   document.querySelectorAll('.zoom-bar .z').forEach(b => {
     b.addEventListener('click', async () => {
-      S.zoom = Number(b.dataset.z);
-      if (S.demo) return;
-      const r = await camera.apply({ zoom: S.zoom }, { throttle: 0 });
-      if (!r.applied.includes('zoom')) toast('这台设备不支持数字变焦');
+      S.zoomManualUntil = performance.now() + 15000;
+      const z = await setZoom(Number(b.dataset.z));
+      toast(`${z.toFixed(1)}× · 15 秒内不自动变焦`);
     });
   });
 
@@ -1925,6 +2013,12 @@ function bindUI() {
   $('btnCreateClose').addEventListener('click', () => { $('createSheet').hidden = true; });
   $('btnAI').addEventListener('click', openAICompose);
   $('btnAIClose').addEventListener('click', () => { $('aiSheet').hidden = true; });
+  $('zoomChip').addEventListener('click', () => {
+    S.zoomManualUntil = performance.now() + 15000;
+    setZoom(1);
+    toast('已回到 1× · 15 秒内不自动变焦');
+  });
+
   $('btnMode').addEventListener('click', () => {
     S.simple = !S.simple;
     applyUIMode();
