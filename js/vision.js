@@ -127,6 +127,9 @@ export class FrameAnalyzer {
     const meanLum = sumL / n;
     const meanR = sumR / n, meanG = sumG / n, meanB = sumB / n;
 
+    // 全局位移：判断"是画面在平移"还是"主体自己在动"
+    this._estGlobalShift(gray, w, h);
+
     let cHigh = 0, cLow = 0;
     for (let i = 0; i < 64; i++) {
       if (i >= 61) cHigh += hist[i];
@@ -366,19 +369,42 @@ export class FrameAnalyzer {
       };
     };
 
+    // ---- 平移锁定 ----
+    // 整个画面在动（手机在平移）时，帧差和显著性都不可靠，
+    // 直接按全局位移把上一帧的主体框推过去，绝不在这一帧换目标。
+    const flow = this.flow || { dx: 0, dy: 0, conf: 0 };
+    const flowMag = Math.hypot(flow.dx, flow.dy);
+    const panning = !!(flow.conf > 0.32 && flowMag > 0.01 && this.lastBox);
+    if (panning) {
+      const lb = this.lastBox;
+      const predicted = {
+        x: clamp(lb.x + flow.dx, 0, 1 - lb.w),
+        y: clamp(lb.y + flow.dy, 0, 1 - lb.h),
+        w: lb.w, h: lb.h,
+        cx: clamp(lb.cx + flow.dx, 0, 1),
+        cy: clamp(lb.cy + flow.dy, 0, 1),
+        area: lb.area,
+        kept: lb.keptCells || 0, count: lb.clusterCells || 0,
+      };
+      // 检测框和预测对得上就用检测（更准），对不上就信预测（别换目标）
+      if (!best || iou(best, predicted) < 0.22) best = predicted;
+    }
+    this.panning = panning;
+
     // 画面里确实有东西在动、而且运动区紧凑时，直接以运动区为主体。
     // 拍运动物体时这才是用户真正想要的框，也比"显著簇"稳定得多。
-    if (motionBox && motionBox.w < 0.55 && motionBox.h < 0.85 &&
+    // 但画面整体在平移时，帧差是"整个场景在动"，不能当主体。
+    if (!panning && motionBox && motionBox.w < 0.55 && motionBox.h < 0.85 &&
         motionRatio > 0.015 && motionRatio < 0.35) {
       best = fromMotion(motionBox);
-    } else if (best && motionBox && best.w > 0.55 && motionBox.w < 0.6 && motionBox.h < 0.9) {
+    } else if (!panning && best && motionBox && best.w > 0.55 && motionBox.w < 0.6 && motionBox.h < 0.9) {
       best = fromMotion(motionBox);
     }
 
     // 跟踪锁定：只有"换了个东西"才需要多帧确认。
     // 平移镜头时同一个主体会整体位移，IoU 同样会掉到很低——
     // 这时如果还按 6 帧确认，框就会死死停在原地，看起来就是"跟不上手"。
-    if (best && this.lastBest && this.lastScore > 0) {
+    if (!panning && best && this.lastBest && this.lastScore > 0) {
       const prev = this.lastBest;
       const keepIou = iou(best, prev);
       const sizeSame = Math.abs(best.w - prev.w) < prev.w * 0.55 + 0.035 &&
@@ -524,7 +550,67 @@ export class FrameAnalyzer {
       meanSat: sumSat / n,
       clutter, colorTemp, tint,
       motion, motionRatio,
+      flow: this.flow || { dx: 0, dy: 0, conf: 0 },
     };
+  }
+
+  /**
+   * 投影法估计全局位移：把灰度按列/行求和，找使 SAD 最小的整体平移量。
+   * 成本只有 O(w*h + 候选数*(w+h))，但能区分"整个画面在平移"和"主体自己在动"。
+   */
+  _estGlobalShift(gray, w, h) {
+    const b = this._buf;
+    if (!b.colSum || b.colSum.length !== w || b.rowSum.length !== h) {
+      b.colSum = new Float32Array(w);
+      b.rowSum = new Float32Array(h);
+      b.colPrev = new Float32Array(w);
+      b.rowPrev = new Float32Array(h);
+      b.hasPrev = false;
+    }
+    const col = b.colSum, row = b.rowSum;
+    col.fill(0); row.fill(0);
+    for (let y = 0; y < h; y++) {
+      const off = y * w;
+      let rs = 0;
+      for (let x = 0; x < w; x++) { const v = gray[off + x]; col[x] += v; rs += v; }
+      row[y] = rs;
+    }
+    for (let x = 0; x < w; x++) col[x] /= h;
+    for (let y = 0; y < h; y++) row[y] /= w;
+
+    if (!b.hasPrev) {
+      b.colPrev.set(col); b.rowPrev.set(row); b.hasPrev = true;
+      this.flow = { dx: 0, dy: 0, conf: 0 };
+      return;
+    }
+
+    const est = (cur, prev, len) => {
+      const maxD = Math.max(4, Math.round(len * 0.16));
+      let bestD = 0, bestCost = Infinity;
+      let zero = 0;
+      for (let i = 0; i < len; i++) zero += Math.abs(cur[i] - prev[i]);
+      zero /= len;
+      // 这个轴上几乎没有变化 → 可以确定"没有位移"
+      if (zero < 0.5) return { d: 0, conf: 1 };
+      for (let d = -maxD; d <= maxD; d++) {
+        const s0 = Math.max(0, -d), e0 = Math.min(len, len - d);
+        if (e0 - s0 < len * 0.55) continue;
+        let cost = 0;
+        for (let i = s0; i < e0; i++) cost += Math.abs(cur[i] - prev[i + d]);
+        cost /= (e0 - s0);
+        if (cost < bestCost) { bestCost = cost; bestD = d; }
+      }
+      const conf = zero > 1e-4 ? Math.max(0, 1 - bestCost / zero) : 0;
+      const atEdge = Math.abs(bestD) >= maxD;
+      return { d: bestD, conf: atEdge ? 0 : conf };
+    };
+
+    const sx = est(col, b.colPrev, w);
+    const sy = est(row, b.rowPrev, h);
+    b.colPrev.set(col); b.rowPrev.set(row);
+
+    // cur[x] ≈ prev[x + d] → 画面实际位移是 -d
+    this.flow = { dx: -sx.d / w, dy: -sy.d / h, conf: Math.min(sx.conf, sy.conf) };
   }
 
   reset() {
@@ -539,6 +625,8 @@ export class FrameAnalyzer {
     this.lastBest = null;
     this.lastScore = 0;
     this.challenger = null;
+    this.flow = { dx: 0, dy: 0, conf: 0 };
+    if (this._buf) this._buf.hasPrev = false;
   }
 }
 

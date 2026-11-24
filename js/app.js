@@ -396,9 +396,15 @@ async function applyAutoParams() {
 }
 
 /* ===================== 叠加绘制 ===================== */
+function mirrored() {
+  return !S.demo && camera.facing === 'user';
+}
+
 function toScreen(nx, ny) {
   if (!L) return { x: 0, y: 0 };
-  return { x: L.rect.x + nx * L.rect.w, y: L.rect.y + ny * L.rect.h };
+  // 前置镜头预览用 CSS 镜像过，覆盖层坐标必须一起翻，否则圈会朝反方向跑
+  const x = mirrored() ? (1 - nx) : nx;
+  return { x: L.rect.x + x * L.rect.w, y: L.rect.y + ny * L.rect.h };
 }
 
 function drawOverlay(ts) {
@@ -601,6 +607,11 @@ function drawCompGuide() {
   const r = L.rect;
   const at = (nx, ny) => [r.x + nx * r.w, r.y + ny * r.h];
   octx.save();
+  // 前置镜头整体镜像时，参考线在矩形内也镜像一次即可（这里没有文字）
+  if (mirrored()) {
+    octx.translate(r.x * 2 + r.w, 0);
+    octx.scale(-1, 1);
+  }
   octx.strokeStyle = 'rgba(255,255,255,.2)';
   octx.lineWidth = 1;
   octx.setLineDash([5, 7]);
